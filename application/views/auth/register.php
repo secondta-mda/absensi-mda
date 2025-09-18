@@ -53,7 +53,7 @@
         <div class="flex-1">
             <span class="font-bold">Perhatian!</span>
             <br>
-            Halaman register akan <b>ditutup</b> pada <b>Jumat, 05 September 2025</b>.
+            Halaman register akan <b>ditutup</b> pada <b>Selasa, 30 September 2025</b>.
         </div>
         <button onclick="document.getElementById('notif-register').style.display='none';"
             class="ml-4 text-white hover:text-gray-200 focus:outline-none">

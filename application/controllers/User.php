@@ -585,14 +585,107 @@ class User extends CI_Controller {
         }
     }
 
-    public function get_absensi_karyawan() {
+    public function get_lokasi()
+    {
         header('Content-Type: application/json');
         
         try {
             $this->authorize(['admin']);
             
+            $this->db->select('id, nama_lokasi');
+            $this->db->from('lokasi');
+            $this->db->order_by('nama_lokasi', 'ASC');
+            $query = $this->db->get();
+
+            if ($query) {
+                $results = $query->result_array();
+                echo json_encode($results);
+            } else {
+                echo json_encode(array());
+            }
+            
+        } catch (Exception $e) {
+            log_message('error', 'Error in get_lokasi: ' . $e->getMessage());
+            echo json_encode(array());
+        }
+    }
+
+    public function get_absensi_data() 
+{
+    header('Content-Type: application/json');
+    
+    try {
+        $this->authorize(['admin']);
+        
+        $data_type = $this->input->post('data_type');
+        $date_range_type = $this->input->post('date_range_type');
+        
+        if (empty($data_type) || empty($date_range_type)) {
+            echo json_encode(array(
+                'status' => 'error',
+                'message' => 'Type data dan jarak waktu harus dipilih'
+            ));
+            return;
+        }
+
+        // Validasi dan set date range
+        if ($date_range_type === 'daily') {
+            $start_date = $this->input->post('start_date');
+            $end_date = $this->input->post('end_date');
+            
+            if (empty($start_date) || empty($end_date)) {
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Tanggal mulai dan tanggal akhir harus diisi'
+                ));
+                return;
+            }
+            
+            if (!$this->validateDate($start_date) || !$this->validateDate($end_date)) {
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Format tanggal tidak valid'
+                ));
+                return;
+            }
+            
+            if (strtotime($start_date) > strtotime($end_date)) {
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir'
+                ));
+                return;
+            }
+            
+        } elseif ($date_range_type === 'monthly') {
+            $month = $this->input->post('month');
+            $year = $this->input->post('year');
+            
+            if (empty($month) || empty($year)) {
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Bulan dan tahun harus diisi'
+                ));
+                return;
+            }
+            
+            if (!is_numeric($month) || !is_numeric($year) || 
+                $month < 1 || $month > 12 || 
+                $year < 2020 || $year > date('Y')) {
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Bulan atau tahun tidak valid'
+                ));
+                return;
+            }
+            
+            $start_date = $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT) . '-01';
+            $end_date = date('Y-m-t', strtotime($start_date));
+        }
+
+        // Query berdasarkan data type
+        if ($data_type === 'per_orang') {
             $employee_id = $this->input->post('employee_id');
-            $date_range_type = $this->input->post('date_range_type');
             
             if (empty($employee_id)) {
                 echo json_encode(array(
@@ -601,15 +694,8 @@ class User extends CI_Controller {
                 ));
                 return;
             }
-            
-            if (empty($date_range_type)) {
-                echo json_encode(array(
-                    'status' => 'error',
-                    'message' => 'Jenis filter tanggal tidak valid'
-                ));
-                return;
-            }
 
+            // Validasi karyawan exists
             $this->db->where('id', $employee_id);
             $employee = $this->db->get('user')->row();
             
@@ -621,166 +707,39 @@ class User extends CI_Controller {
                 return;
             }
 
-            if ($date_range_type === 'daily') {
-                $start_date = $this->input->post('start_date');
-                $end_date = $this->input->post('end_date');
-                
-                if (empty($start_date) || empty($end_date)) {
-                    echo json_encode(array(
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai dan tanggal akhir harus diisi'
-                    ));
-                    return;
-                }
-                
-                if (!$this->validateDate($start_date) || !$this->validateDate($end_date)) {
-                    echo json_encode(array(
-                        'status' => 'error',
-                        'message' => 'Format tanggal tidak valid'
-                    ));
-                    return;
-                }
-                
-                if (strtotime($start_date) > strtotime($end_date)) {
-                    echo json_encode(array(
-                        'status' => 'error',
-                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir'
-                    ));
-                    return;
-                }
-                
-            } elseif ($date_range_type === 'monthly') {
-                $month = $this->input->post('month');
-                $year = $this->input->post('year');
-                
-                if (empty($month) || empty($year)) {
-                    echo json_encode(array(
-                        'status' => 'error',
-                        'message' => 'Bulan dan tahun harus diisi'
-                    ));
-                    return;
-                }
-                
-                if (!is_numeric($month) || !is_numeric($year) || 
-                    $month < 1 || $month > 12 || 
-                    $year < 2020 || $year > date('Y')) {
-                    echo json_encode(array(
-                        'status' => 'error',
-                        'message' => 'Bulan atau tahun tidak valid'
-                    ));
-                    return;
-                }
-                
-                $start_date = $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT) . '-01';
-                $end_date = date('Y-m-t', strtotime($start_date)); // Last day of month
-                
-            } else {
+            $combined_data = $this->getCombinedDataByEmployee($employee_id, $start_date, $end_date);
+            
+        } elseif ($data_type === 'per_area') {
+            $area_id = $this->input->post('area_id');
+            
+            if (empty($area_id)) {
                 echo json_encode(array(
                     'status' => 'error',
-                    'message' => 'Tipe filter tidak dikenali'
+                    'message' => 'ID area tidak valid'
                 ));
                 return;
             }
 
-            $this->db->select('
-                absensi.*,
-                user.nama as nama_karyawan,
-                DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
-                DAYNAME(absensi.tanggal) as hari,
-                TIME(absensi.jam_masuk) as jam_masuk_only,
-                TIME(absensi.jam_pulang) as jam_pulang_only,
-                lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
-                lokasi_pulang.nama_lokasi as nama_lokasi_pulang
-            ');
-            $this->db->from('absensi');
-            $this->db->join('user', 'user.id = absensi.user_id', 'left');
-            $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
-            $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
-            $this->db->where('absensi.user_id', $employee_id);
-            $this->db->where('absensi.tanggal >=', $start_date);
-            $this->db->where('absensi.tanggal <=', $end_date);
-            $this->db->order_by('absensi.tanggal', 'DESC');
+            // Validasi lokasi exists
+            $this->db->where('id', $area_id);
+            $location = $this->db->get('lokasi')->row();
             
-            $query = $this->db->get();
-            
-            if (!$query) {
+            if (!$location) {
                 echo json_encode(array(
                     'status' => 'error',
-                    'message' => 'Gagal mengambil data dari database'
+                    'message' => 'Lokasi tidak ditemukan'
                 ));
                 return;
             }
-            
-            $absensi_data = $query->result();
 
-            $formatted_data = array();
-            foreach ($absensi_data as $absensi) {
-                $status = 'Tidak Absen';
-                if ($absensi->jam_masuk && $absensi->jam_pulang) {
-                    $status = 'Masuk';
-                } elseif ($absensi->jam_masuk && !$absensi->jam_pulang) {
-                    $status = 'Masuk (Belum Pulang)';
-                }
-                
-                $keterangan_parts = array();
-                if (!empty($absensi->keterangan_masuk)) {
-                    $keterangan_parts[] = 'Masuk: ' . $absensi->keterangan_masuk;
-                }
-                if (!empty($absensi->keterangan_pulang)) {
-                    $keterangan_parts[] = 'Pulang: ' . $absensi->keterangan_pulang;
-                }
-                if (!empty($absensi->durasi_kerja)) {
-                    $keterangan_parts[] = 'Durasi: ' . $absensi->durasi_kerja . ' jam';
-                }
-                
-                $keterangan = !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '';
+            $combined_data = $this->getCombinedDataByArea($area_id, $start_date, $end_date);
+        }
 
-                $lokasi_masuk = '';
-                if (!empty($absensi->nama_lokasi_masuk)) {
-                    $lokasi_masuk = $absensi->nama_lokasi_masuk;
-                    if (!empty($absensi->latitude_masuk) && !empty($absensi->longitude_masuk)) {
-                        $lokasi_masuk .= ' (' . $absensi->latitude_masuk . ', ' . $absensi->longitude_masuk . ')';
-                    }
-                }
-                
-                $lokasi_pulang = '';
-                if (!empty($absensi->nama_lokasi_pulang)) {
-                    $lokasi_pulang = $absensi->nama_lokasi_pulang;
-                    if (!empty($absensi->latitude_pulang) && !empty($absensi->longitude_pulang)) {
-                        $lokasi_pulang .= ' (' . $absensi->latitude_pulang . ', ' . $absensi->longitude_pulang . ')';
-                    }
-                }
-
-                $formatted_data[] = array(
-                    'tanggal' => $absensi->tanggal,
-                    'tanggal_formatted' => $absensi->tanggal_formatted,
-                    'hari' => $this->getIndonesianDay($absensi->hari),
-                    'jam_masuk' => $absensi->jam_masuk_only ? date('H:i', strtotime($absensi->jam_masuk_only)) : null,
-                    'jam_pulang' => $absensi->jam_pulang_only ? date('H:i', strtotime($absensi->jam_pulang_only)) : null,
-                    'lokasi_masuk' => $lokasi_masuk ?: null,
-                    'lokasi_pulang' => $lokasi_pulang ?: null,
-                    'status' => $status,
-                    'keterangan' => $keterangan,
-                    'foto_masuk' => $absensi->foto_masuk ? $absensi->foto_masuk : null,
-                    'foto_pulang' => $absensi->foto_pulang ? $absensi->foto_pulang : null,
-                    'nama_karyawan' => $absensi->nama_karyawan,
-                    // Data tambahan untuk debugging/report
-                    'latitude_masuk' => $absensi->latitude_masuk,
-                    'longitude_masuk' => $absensi->longitude_masuk,
-                    'latitude_pulang' => $absensi->latitude_pulang,
-                    'longitude_pulang' => $absensi->longitude_pulang,
-                    'durasi_kerja' => $absensi->durasi_kerja
-                );
-            }
-            
-            $summary = $this->generateAttendanceSummary($formatted_data);
-            
+        if (empty($combined_data)) {
             echo json_encode(array(
                 'status' => 'success',
-                'data' => $formatted_data,
-                'summary' => $summary,
-                'message' => 'Data berhasil dimuat',
-                'employee_name' => $employee->nama,
+                'data' => array(),
+                'message' => 'Tidak ada data yang ditemukan',
                 'date_range' => array(
                     'type' => $date_range_type,
                     'start_date' => $start_date,
@@ -788,15 +747,562 @@ class User extends CI_Controller {
                     'formatted' => $this->formatDateRange($date_range_type, $start_date, $end_date)
                 )
             ));
+            return;
+        }
+
+        $formatted_data = $this->formatCombinedData($combined_data);
+        $summary = $this->generateCombinedSummary($formatted_data);
+        
+        echo json_encode(array(
+            'status' => 'success',
+            'data' => $formatted_data,
+            'summary' => $summary,
+            'message' => 'Data berhasil dimuat',
+            'data_type' => $data_type,
+            'date_range' => array(
+                'type' => $date_range_type,
+                'start_date' => $start_date,
+                'end_date' => $end_date,
+                'formatted' => $this->formatDateRange($date_range_type, $start_date, $end_date)
+            )
+        ));
+        
+    } catch (Exception $e) {
+        log_message('error', 'Error in get_absensi_data: ' . $e->getMessage());
+        echo json_encode(array(
+            'status' => 'error',
+            'message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()
+        ));
+    }
+}
+
+private function getCombinedDataByEmployee($employee_id, $start_date, $end_date)
+{
+    $combined_data = array();
+    
+    // Get absensi data
+    $this->db->select('
+        "absensi" as type,
+        absensi.tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(absensi.tanggal) as hari,
+        TIME(absensi.jam_masuk) as jam_masuk_only,
+        TIME(absensi.jam_pulang) as jam_pulang_only,
+        lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
+        lokasi_pulang.nama_lokasi as nama_lokasi_pulang,
+        absensi.foto_masuk,
+        absensi.foto_pulang,
+        absensi.latitude_masuk,
+        absensi.longitude_masuk,
+        absensi.latitude_pulang,
+        absensi.longitude_pulang,
+        absensi.keterangan_masuk,
+        absensi.keterangan_pulang,
+        absensi.durasi_kerja,
+        "" as alasan,
+        "" as awal_periode,
+        "" as akhir_periode,
+        "" as foto_dokumen
+    ', FALSE);
+    $this->db->from('absensi');
+    $this->db->join('user', 'user.id = absensi.user_id', 'left');
+    $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
+    $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+    $this->db->where('absensi.user_id', $employee_id);
+    $this->db->where('absensi.tanggal >=', $start_date);
+    $this->db->where('absensi.tanggal <=', $end_date);
+    
+    $absensi_query = $this->db->get();
+    if ($absensi_query) {
+        $combined_data = array_merge($combined_data, $absensi_query->result());
+    }
+    
+    // Get cuti data
+    $this->db->select('
+        "cuti" as type,
+        cuti.awal_cuti as tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(cuti.awal_cuti, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(cuti.awal_cuti) as hari,
+        "" as jam_masuk_only,
+        "" as jam_pulang_only,
+        "" as nama_lokasi_masuk,
+        "" as nama_lokasi_pulang,
+        "" as foto_masuk,
+        "" as foto_pulang,
+        "" as latitude_masuk,
+        "" as longitude_masuk,
+        "" as latitude_pulang,
+        "" as longitude_pulang,
+        "" as keterangan_masuk,
+        "" as keterangan_pulang,
+        "" as durasi_kerja,
+        cuti.alasan_cuti as alasan,
+        cuti.awal_cuti as awal_periode,
+        cuti.akhir_cuti as akhir_periode,
+        "" as foto_dokumen
+    ', FALSE);
+    $this->db->from('cuti');
+    $this->db->join('user', 'user.id = cuti.user_id', 'left');
+    $this->db->where('cuti.user_id', $employee_id);
+    $this->db->where('cuti.awal_cuti <=', $end_date);
+    $this->db->where('cuti.akhir_cuti >=', $start_date);
+    
+    $cuti_query = $this->db->get();
+    if ($cuti_query) {
+        $combined_data = array_merge($combined_data, $cuti_query->result());
+    }
+    
+    // Get izin data
+    $this->db->select('
+        "izin" as type,
+        izin.awal_izin as tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(izin.awal_izin, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(izin.awal_izin) as hari,
+        "" as jam_masuk_only,
+        "" as jam_pulang_only,
+        "" as nama_lokasi_masuk,
+        "" as nama_lokasi_pulang,
+        "" as foto_masuk,
+        "" as foto_pulang,
+        "" as latitude_masuk,
+        "" as longitude_masuk,
+        "" as latitude_pulang,
+        "" as longitude_pulang,
+        "" as keterangan_masuk,
+        "" as keterangan_pulang,
+        "" as durasi_kerja,
+        izin.alasan_izin as alasan,
+        izin.awal_izin as awal_periode,
+        izin.akhir_izin as akhir_periode,
+        izin.foto_izin as foto_dokumen
+    ', FALSE);
+    $this->db->from('izin');
+    $this->db->join('user', 'user.id = izin.user_id', 'left');
+    $this->db->where('izin.user_id', $employee_id);
+    $this->db->where('izin.awal_izin <=', $end_date);
+    $this->db->where('izin.akhir_izin >=', $start_date);
+    
+    $izin_query = $this->db->get();
+    if ($izin_query) {
+        $combined_data = array_merge($combined_data, $izin_query->result());
+    }
+    
+    // Sort by date
+    usort($combined_data, function($a, $b) {
+        return strtotime($b->tanggal) - strtotime($a->tanggal);
+    });
+    
+    return $combined_data;
+}
+
+private function getCombinedDataByArea($area_id, $start_date, $end_date)
+{
+    $combined_data = array();
+    
+    // Get absensi data by area
+    $this->db->select('
+        "absensi" as type,
+        absensi.tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(absensi.tanggal) as hari,
+        TIME(absensi.jam_masuk) as jam_masuk_only,
+        TIME(absensi.jam_pulang) as jam_pulang_only,
+        lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
+        lokasi_pulang.nama_lokasi as nama_lokasi_pulang,
+        absensi.foto_masuk,
+        absensi.foto_pulang,
+        absensi.latitude_masuk,
+        absensi.longitude_masuk,
+        absensi.latitude_pulang,
+        absensi.longitude_pulang,
+        absensi.keterangan_masuk,
+        absensi.keterangan_pulang,
+        absensi.durasi_kerja,
+        "" as alasan,
+        "" as awal_periode,
+        "" as akhir_periode,
+        "" as foto_dokumen
+    ', FALSE);
+    $this->db->from('absensi');
+    $this->db->join('user', 'user.id = absensi.user_id', 'left');
+    $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
+    $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+    $this->db->where('user.lokasi_id', $area_id);
+    $this->db->where('absensi.tanggal >=', $start_date);
+    $this->db->where('absensi.tanggal <=', $end_date);
+    
+    $absensi_query = $this->db->get();
+    if ($absensi_query) {
+        $combined_data = array_merge($combined_data, $absensi_query->result());
+    }
+    
+    // Get cuti data by area
+    $this->db->select('
+        "cuti" as type,
+        cuti.awal_cuti as tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(cuti.awal_cuti, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(cuti.awal_cuti) as hari,
+        "" as jam_masuk_only,
+        "" as jam_pulang_only,
+        "" as nama_lokasi_masuk,
+        "" as nama_lokasi_pulang,
+        "" as foto_masuk,
+        "" as foto_pulang,
+        "" as latitude_masuk,
+        "" as longitude_masuk,
+        "" as latitude_pulang,
+        "" as longitude_pulang,
+        "" as keterangan_masuk,
+        "" as keterangan_pulang,
+        "" as durasi_kerja,
+        cuti.alasan_cuti as alasan,
+        cuti.awal_cuti as awal_periode,
+        cuti.akhir_cuti as akhir_periode,
+        "" as foto_dokumen
+    ', FALSE);
+    $this->db->from('cuti');
+    $this->db->join('user', 'user.id = cuti.user_id', 'left');
+    $this->db->where('user.lokasi_id', $area_id);
+    $this->db->where('cuti.awal_cuti <=', $end_date);
+    $this->db->where('cuti.akhir_cuti >=', $start_date);
+    
+    $cuti_query = $this->db->get();
+    if ($cuti_query) {
+        $combined_data = array_merge($combined_data, $cuti_query->result());
+    }
+    
+    // Get izin data by area
+    $this->db->select('
+        "izin" as type,
+        izin.awal_izin as tanggal,
+        user.nama as nama_karyawan,
+        DATE_FORMAT(izin.awal_izin, "%d %M %Y") as tanggal_formatted,
+        DAYNAME(izin.awal_izin) as hari,
+        "" as jam_masuk_only,
+        "" as jam_pulang_only,
+        "" as nama_lokasi_masuk,
+        "" as nama_lokasi_pulang,
+        "" as foto_masuk,
+        "" as foto_pulang,
+        "" as latitude_masuk,
+        "" as longitude_masuk,
+        "" as latitude_pulang,
+        "" as longitude_pulang,
+        "" as keterangan_masuk,
+        "" as keterangan_pulang,
+        "" as durasi_kerja,
+        izin.alasan_izin as alasan,
+        izin.awal_izin as awal_periode,
+        izin.akhir_izin as akhir_periode,
+        izin.foto_izin as foto_dokumen
+    ', FALSE);
+    $this->db->from('izin');
+    $this->db->join('user', 'user.id = izin.user_id', 'left');
+    $this->db->where('user.lokasi_id', $area_id);
+    $this->db->where('izin.awal_izin <=', $end_date);
+    $this->db->where('izin.akhir_izin >=', $start_date);
+    
+    $izin_query = $this->db->get();
+    if ($izin_query) {
+        $combined_data = array_merge($combined_data, $izin_query->result());
+    }
+    
+    // Sort by date and name
+    usort($combined_data, function($a, $b) {
+        $dateComparison = strtotime($b->tanggal) - strtotime($a->tanggal);
+        if ($dateComparison === 0) {
+            return strcmp($a->nama_karyawan, $b->nama_karyawan);
+        }
+        return $dateComparison;
+    });
+    
+    return $combined_data;
+}
+
+private function formatCombinedData($combined_data)
+{
+    $formatted_data = array();
+    
+    foreach ($combined_data as $record) {
+        $formatted_record = array(
+            'type' => $record->type,
+            'tanggal' => $record->tanggal,
+            'tanggal_formatted' => $record->tanggal_formatted,
+            'hari' => $this->getIndonesianDay($record->hari),
+            'nama_karyawan' => $record->nama_karyawan,
+        );
+        
+        if ($record->type === 'absensi') {
+            $status = 'Tidak Absen';
+            if ($record->jam_masuk_only && $record->jam_pulang_only) {
+                $status = 'Masuk';
+            } elseif ($record->jam_masuk_only && !$record->jam_pulang_only) {
+                $status = 'Masuk (Belum Pulang)';
+            }
             
-        } catch (Exception $e) {
-            log_message('error', 'Error in get_absensi_karyawan: ' . $e->getMessage());
-            echo json_encode(array(
-                'status' => 'error',
-                'message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()
+            $keterangan_parts = array();
+            if (!empty($record->keterangan_masuk)) {
+                $keterangan_parts[] = 'Masuk: ' . $record->keterangan_masuk;
+            }
+            if (!empty($record->keterangan_pulang)) {
+                $keterangan_parts[] = 'Pulang: ' . $record->keterangan_pulang;
+            }
+            if (!empty($record->durasi_kerja)) {
+                $keterangan_parts[] = 'Durasi: ' . $record->durasi_kerja . ' jam';
+            }
+            
+            $lokasi_masuk = '';
+            if (!empty($record->nama_lokasi_masuk)) {
+                $lokasi_masuk = $record->nama_lokasi_masuk;
+                if (!empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
+                    $lokasi_masuk .= ' (' . $record->latitude_masuk . ', ' . $record->longitude_masuk . ')';
+                }
+            }
+            
+            $lokasi_pulang = '';
+            if (!empty($record->nama_lokasi_pulang)) {
+                $lokasi_pulang = $record->nama_lokasi_pulang;
+                if (!empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
+                    $lokasi_pulang .= ' (' . $record->latitude_pulang . ', ' . $record->longitude_pulang . ')';
+                }
+            }
+            
+            $formatted_record = array_merge($formatted_record, array(
+                'jam_masuk' => $record->jam_masuk_only ? date('H:i', strtotime($record->jam_masuk_only)) : null,
+                'jam_pulang' => $record->jam_pulang_only ? date('H:i', strtotime($record->jam_pulang_only)) : null,
+                'lokasi_masuk' => $lokasi_masuk ?: null,
+                'lokasi_pulang' => $lokasi_pulang ?: null,
+                'status' => $status,
+                'keterangan' => !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '',
+                'foto_masuk' => $record->foto_masuk ? $record->foto_masuk : null,
+                'foto_pulang' => $record->foto_pulang ? $record->foto_pulang : null,
+                'alasan' => null,
+                'periode' => null,
+                'foto_dokumen' => null
+            ));
+            
+        } elseif ($record->type === 'cuti') {
+            $periode = '';
+            if ($record->awal_periode && $record->akhir_periode) {
+                if ($record->awal_periode === $record->akhir_periode) {
+                    $periode = date('d M Y', strtotime($record->awal_periode));
+                } else {
+                    $periode = date('d M Y', strtotime($record->awal_periode)) . ' - ' . date('d M Y', strtotime($record->akhir_periode));
+                }
+            }
+            
+            $formatted_record = array_merge($formatted_record, array(
+                'jam_masuk' => null,
+                'jam_pulang' => null,
+                'lokasi_masuk' => null,
+                'lokasi_pulang' => null,
+                'status' => 'Cuti',
+                'keterangan' => null,
+                'foto_masuk' => null,
+                'foto_pulang' => null,
+                'alasan' => $record->alasan,
+                'periode' => $periode,
+                'foto_dokumen' => null
+            ));
+            
+        } elseif ($record->type === 'izin') {
+            $periode = '';
+            if ($record->awal_periode && $record->akhir_periode) {
+                if ($record->awal_periode === $record->akhir_periode) {
+                    $periode = date('d M Y', strtotime($record->awal_periode));
+                } else {
+                    $periode = date('d M Y', strtotime($record->awal_periode)) . ' - ' . date('d M Y', strtotime($record->akhir_periode));
+                }
+            }
+            
+            $formatted_record = array_merge($formatted_record, array(
+                'jam_masuk' => null,
+                'jam_pulang' => null,
+                'lokasi_masuk' => null,
+                'lokasi_pulang' => null,
+                'status' => 'Izin',
+                'keterangan' => null,
+                'foto_masuk' => null,
+                'foto_pulang' => null,
+                'alasan' => $record->alasan,
+                'periode' => $periode,
+                'foto_dokumen' => $record->foto_dokumen ? base_url($record->foto_dokumen) : null
             ));
         }
+        
+        $formatted_data[] = $formatted_record;
     }
+    
+    return $formatted_data;
+}
+
+private function generateCombinedSummary($data) {
+    $total_records = count($data);
+    $absensi_count = 0;
+    $cuti_count = 0;
+    $izin_count = 0;
+    $present_days = 0;
+    $late_days = 0;
+    $incomplete_days = 0;
+    
+    $standard_work_time = '08:00';
+    
+    foreach ($data as $record) {
+        if ($record['type'] === 'absensi') {
+            $absensi_count++;
+            
+            if ($record['status'] === 'Masuk') {
+                $present_days++;
+                
+                // Cek keterlambatan
+                if ($record['jam_masuk'] && strtotime($record['jam_masuk']) > strtotime($standard_work_time)) {
+                    $late_days++;
+                }
+            } elseif ($record['status'] === 'Masuk (Belum Pulang)') {
+                $incomplete_days++;
+            }
+        } elseif ($record['type'] === 'cuti') {
+            $cuti_count++;
+        } elseif ($record['type'] === 'izin') {
+            $izin_count++;
+        }
+    }
+    
+    return array(
+        'total_records' => $total_records,
+        'absensi_count' => $absensi_count,
+        'cuti_count' => $cuti_count,
+        'izin_count' => $izin_count,
+        'present_days' => $present_days,
+        'late_days' => $late_days,
+        'incomplete_days' => $incomplete_days,
+        'attendance_rate' => $absensi_count > 0 ? round(($present_days / $absensi_count) * 100, 1) : 0
+    );
+}
+
+    private function getAbsensiByEmployee($employee_id, $start_date, $end_date)
+    {
+        $this->db->select('
+            absensi.*,
+            user.nama as nama_karyawan,
+            DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
+            DAYNAME(absensi.tanggal) as hari,
+            TIME(absensi.jam_masuk) as jam_masuk_only,
+            TIME(absensi.jam_pulang) as jam_pulang_only,
+            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
+            lokasi_pulang.nama_lokasi as nama_lokasi_pulang
+        ');
+        $this->db->from('absensi');
+        $this->db->join('user', 'user.id = absensi.user_id', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->where('absensi.user_id', $employee_id);
+        $this->db->where('absensi.tanggal >=', $start_date);
+        $this->db->where('absensi.tanggal <=', $end_date);
+        $this->db->order_by('absensi.tanggal', 'DESC');
+        
+        $query = $this->db->get();
+        return $query ? $query->result() : array();
+    }
+
+    private function getAbsensiByArea($area_id, $start_date, $end_date)
+    {
+        $this->db->select('
+            absensi.*,
+            user.nama as nama_karyawan,
+            DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
+            DAYNAME(absensi.tanggal) as hari,
+            TIME(absensi.jam_masuk) as jam_masuk_only,
+            TIME(absensi.jam_pulang) as jam_pulang_only,
+            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
+            lokasi_pulang.nama_lokasi as nama_lokasi_pulang
+        ');
+        $this->db->from('absensi');
+        $this->db->join('user', 'user.id = absensi.user_id', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->where('user.lokasi_id', $area_id);
+        $this->db->where('absensi.tanggal >=', $start_date);
+        $this->db->where('absensi.tanggal <=', $end_date);
+        $this->db->order_by('absensi.tanggal', 'DESC');
+        $this->db->order_by('user.nama', 'ASC');
+        
+        $query = $this->db->get();
+        return $query ? $query->result() : array();
+    }
+
+    private function formatAbsensiData($absensi_data)
+    {
+        $formatted_data = array();
+        
+        foreach ($absensi_data as $absensi) {
+            $status = 'Tidak Absen';
+            if ($absensi->jam_masuk && $absensi->jam_pulang) {
+                $status = 'Masuk';
+            } elseif ($absensi->jam_masuk && !$absensi->jam_pulang) {
+                $status = 'Masuk (Belum Pulang)';
+            }
+            
+            $keterangan_parts = array();
+            if (!empty($absensi->keterangan_masuk)) {
+                $keterangan_parts[] = 'Masuk: ' . $absensi->keterangan_masuk;
+            }
+            if (!empty($absensi->keterangan_pulang)) {
+                $keterangan_parts[] = 'Pulang: ' . $absensi->keterangan_pulang;
+            }
+            if (!empty($absensi->durasi_kerja)) {
+                $keterangan_parts[] = 'Durasi: ' . $absensi->durasi_kerja . ' jam';
+            }
+            
+            $keterangan = !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '';
+
+            $lokasi_masuk = '';
+            if (!empty($absensi->nama_lokasi_masuk)) {
+                $lokasi_masuk = $absensi->nama_lokasi_masuk;
+                if (!empty($absensi->latitude_masuk) && !empty($absensi->longitude_masuk)) {
+                    $lokasi_masuk .= ' (' . $absensi->latitude_masuk . ', ' . $absensi->longitude_masuk . ')';
+                }
+            }
+            
+            $lokasi_pulang = '';
+            if (!empty($absensi->nama_lokasi_pulang)) {
+                $lokasi_pulang = $absensi->nama_lokasi_pulang;
+                if (!empty($absensi->latitude_pulang) && !empty($absensi->longitude_pulang)) {
+                    $lokasi_pulang .= ' (' . $absensi->latitude_pulang . ', ' . $absensi->longitude_pulang . ')';
+                }
+            }
+
+            $formatted_data[] = array(
+                'tanggal' => $absensi->tanggal,
+                'tanggal_formatted' => $absensi->tanggal_formatted,
+                'hari' => $this->getIndonesianDay($absensi->hari),
+                'jam_masuk' => $absensi->jam_masuk_only ? date('H:i', strtotime($absensi->jam_masuk_only)) : null,
+                'jam_pulang' => $absensi->jam_pulang_only ? date('H:i', strtotime($absensi->jam_pulang_only)) : null,
+                'lokasi_masuk' => $lokasi_masuk ?: null,
+                'lokasi_pulang' => $lokasi_pulang ?: null,
+                'status' => $status,
+                'keterangan' => $keterangan,
+                'foto_masuk' => $absensi->foto_masuk ? $absensi->foto_masuk : null,
+                'foto_pulang' => $absensi->foto_pulang ? $absensi->foto_pulang : null,
+                'nama_karyawan' => $absensi->nama_karyawan,
+                // Data tambahan untuk debugging/report
+                'latitude_masuk' => $absensi->latitude_masuk,
+                'longitude_masuk' => $absensi->longitude_masuk,
+                'latitude_pulang' => $absensi->latitude_pulang,
+                'longitude_pulang' => $absensi->longitude_pulang,
+                'durasi_kerja' => $absensi->durasi_kerja
+            );
+        }
+        
+        return $formatted_data;
+    }
+
+
 
     private function validateDate($date, $format = 'Y-m-d') {
         $d = DateTime::createFromFormat($format, $date);
@@ -859,7 +1365,7 @@ class User extends CI_Controller {
         
         return $days[$englishDay] ?? $englishDay;
     }
-
+    
     private function authorize($roles) {
         $userRole = $this->session->userdata('role');
         if (!in_array($userRole, $roles)) {

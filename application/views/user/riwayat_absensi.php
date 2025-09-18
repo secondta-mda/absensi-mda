@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dashboard Cuti</title>
+    <title>Dashboard Riwayat Data</title>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -24,36 +24,65 @@
         font-style: normal;
     }
 
+    /* Responsive table enhancements untuk kolom tambahan */
     @media (max-width: 768px) {
         .responsive-table thead {
             display: none;
         }
 
-        .responsive-table tr {
+        .responsive-table tbody tr {
             display: block;
             margin-bottom: 1rem;
+            padding: 1rem;
             border-radius: 0.5rem;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+            background: white;
+            border: 1px solid #e5e7eb;
         }
 
-        .responsive-table td {
+        .responsive-table tbody td {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem;
+            align-items: flex-start;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #f3f4f6;
             text-align: right;
-            border-bottom: 1px solid #e5e7eb;
+            min-height: 2rem;
         }
 
-        .responsive-table td::before {
-            content: attr(data-label);
+        .responsive-table tbody td:last-child {
+            border-bottom: none;
+        }
+
+        .responsive-table tbody td::before {
+            content: attr(data-label) ": ";
             font-weight: 600;
             color: #374151;
             text-align: left;
+            min-width: 100px;
+            flex-shrink: 0;
         }
 
-        .status-badge {
+        /* Khusus untuk type badge */
+        .responsive-table tbody td[data-label="Type"] {
             justify-content: flex-end;
+        }
+
+        /* Khusus untuk status badge */
+        .responsive-table tbody td[data-label="Status"] {
+            justify-content: flex-end;
+        }
+
+        /* Action buttons styling */
+        .responsive-table tbody td[data-label="Aksi"] {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 0.25rem;
+        }
+
+        .responsive-table tbody td[data-label="Aksi"] button {
+            width: 100%;
+            margin-bottom: 0;
         }
     }
 
@@ -69,6 +98,60 @@
 
     .date-input-group {
         transition: all 0.3s ease;
+    }
+
+    /* Styling untuk summary cards */
+    .summary-cards {
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Badge variations */
+    .type-badge {
+        font-weight: 600;
+        font-size: 0.75rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 9999px;
+    }
+
+    /* Hover effects untuk rows */
+    .hover\:bg-gray-50:hover {
+        background-color: #f9fafb;
+        transition: background-color 0.15s ease-in-out;
+    }
+
+    /* Enhanced button styling */
+    .btn-foto-absensi {
+        background: linear-gradient(45deg, #3b82f6, #1d4ed8);
+        transition: all 0.2s ease;
+    }
+
+    .btn-foto-absensi:hover {
+        background: linear-gradient(45deg, #1d4ed8, #1e40af);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+    }
+
+    .btn-foto-izin {
+        background: linear-gradient(45deg, #f97316, #ea580c);
+        transition: all 0.2s ease;
+    }
+
+    .btn-foto-izin:hover {
+        background: linear-gradient(45deg, #ea580c, #dc2626);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4);
     }
     </style>
 </head>
@@ -114,28 +197,54 @@
             </ul>
         </aside>
 
-        <main class="flex-1 p-6 md:ml-64 mb-20 md:mb-0">
-            <h2 class="text-3xl font-bold mb-8 text-gray-800 border-b pb-2">Riwayat Absensi Karyawan</h2>
+        <main class="flex-1 p-6 md:ml-64 mb-20 md:mb-0 overflow-x-hidden">
+            <h2 class="text-3xl font-bold mb-8 text-gray-800 border-b pb-2">Riwayat Data Karyawan</h2>
 
             <div class="mb-6 bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
-                <h3 class="text-xl font-bold mb-6 text-gray-800">Filter Data Absensi</h3>
+                <h3 class="text-xl font-bold mb-6 text-gray-800">Filter Data</h3>
 
                 <form id="searchForm" class="space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Type Data Filter -->
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Type Data</label>
+                            <select id="dataType"
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">-- Pilih Type Data --</option>
+                                <option value="per_orang">Data Per Orang</option>
+                                <option value="per_area">Data Per Area</option>
+                            </select>
+                        </div>
+
+                        <!-- Jarak Waktu Filter -->
                         <div>
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Jarak Waktu</label>
                             <select id="dateRangeType"
-                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                disabled>
                                 <option value="">-- Pilih Jarak Waktu --</option>
                                 <option value="daily">Harian (Rentang Tanggal)</option>
                                 <option value="monthly">Bulanan</option>
                             </select>
                         </div>
+                    </div>
 
+                    <!-- Selection Filters -->
+                    <div class="grid grid-cols-1 gap-6">
+                        <!-- Employee Select (for per_orang) -->
                         <div id="employeeSelectDiv" class="hidden">
                             <label class="block text-sm font-semibold text-gray-700 mb-2">Karyawan</label>
                             <select id="employeeSelect" class="w-full">
                                 <option value="">-- Pilih Karyawan --</option>
+                            </select>
+                        </div>
+
+                        <!-- Area Select (for per_area) -->
+                        <div id="areaSelectDiv" class="hidden">
+                            <label class="block text-sm font-semibold text-gray-700 mb-2">Area/Lokasi</label>
+                            <select id="areaSelect"
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                                <option value="">-- Pilih Area --</option>
                             </select>
                         </div>
                     </div>
@@ -194,12 +303,20 @@
             </div>
 
             <div class="mt-8 md:mt-12">
-                <h3 class="text-xl font-bold mb-4 md:mb-6 text-gray-800">Data Riwayat Absensi</h3>
+                <h3 class="text-xl font-bold mb-4 md:mb-6 text-gray-800">Data Riwayat Absensi, Cuti & Izin</h3>
+
+                <!-- Summary Cards akan diinsert di sini oleh JavaScript -->
 
                 <div class="bg-white rounded-2xl shadow-lg p-6 border border-gray-200 overflow-x-auto">
                     <table class="responsive-table w-full">
                         <thead class="bg-gray-50">
                             <tr>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Type</th>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Nama</th>
                                 <th
                                     class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Tanggal</th>
@@ -223,6 +340,12 @@
                                     Status</th>
                                 <th
                                     class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Alasan</th>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Periode</th>
+                                <th
+                                    class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     Keterangan</th>
                                 <th
                                     class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -231,7 +354,7 @@
                         </thead>
                         <tbody class="bg-white divide-y divide-gray-200">
                             <tr>
-                                <td colspan="9" class="text-center py-8 text-gray-500">
+                                <td colspan="13" class="text-center py-8 text-gray-500">
                                     <i class="fas fa-search text-4xl mb-3 opacity-50"></i>
                                     <p class="text-lg">Silakan pilih filter untuk menampilkan data</p>
                                 </td>
@@ -244,6 +367,7 @@
         </main>
     </div>
 
+    <!-- Bottom Navigation for Mobile -->
     <nav
         class="md:hidden rounded-t-3xl fixed bottom-0 left-0 right-0 bg-white shadow-lg border-t border-gray-200 flex justify-around py-2 z-30">
         <a href="<?php echo base_url('user'); ?>"
@@ -283,6 +407,7 @@
         </a>
     </nav>
 
+    <!-- Modal untuk Foto Absensi -->
     <div id="fotoModal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
         <div class="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
             <div class="mt-3">
@@ -318,35 +443,79 @@
     <script>
     $(document).ready(function() {
         generateYearOptions();
-
         setDefaultDates();
 
+        // Data Type change handler
+        $('#dataType').on('change', function() {
+            const selectedDataType = $(this).val();
+
+            // Reset and hide all dependent fields
+            $('#dateRangeType').val('').prop('disabled', true);
+            $('#dateInputs, #dailyInputs, #monthlyInputs, #employeeSelectDiv, #areaSelectDiv, #submitBtn')
+                .addClass('hidden');
+
+            // Reset selection fields
+            $('#employeeSelect').val('').trigger('change');
+            $('#areaSelect').val('');
+
+            // Remove previous summary cards
+            $('.summary-cards').remove();
+
+            if (selectedDataType) {
+                // Enable date range type selector
+                $('#dateRangeType').prop('disabled', false);
+
+                // Check if both selections are made
+                checkSelections();
+            }
+        });
+
+        // Date Range Type change handler
         $('#dateRangeType').on('change', function() {
             const selectedType = $(this).val();
 
-            $('#dateInputs, #dailyInputs, #monthlyInputs, #employeeSelectDiv, #submitBtn').addClass(
-                'hidden');
+            $('#dateInputs, #dailyInputs, #monthlyInputs, #submitBtn').addClass('hidden');
 
             if (selectedType) {
-                $('#dateInputs, #employeeSelectDiv').removeClass('hidden');
+                // Check if both selections are made
+                checkSelections();
+            }
+        });
 
-                if (selectedType === 'daily') {
+        // Function to check if both selections are made
+        function checkSelections() {
+            const dataType = $('#dataType').val();
+            const dateRangeType = $('#dateRangeType').val();
+
+            // Only proceed if both selections are made
+            if (dataType && dateRangeType) {
+                // Show appropriate selection div based on data type
+                if (dataType === 'per_orang') {
+                    $('#employeeSelectDiv').removeClass('hidden');
+                    initializeEmployeeSelect();
+                } else if (dataType === 'per_area') {
+                    $('#areaSelectDiv').removeClass('hidden');
+                    loadAreaOptions();
+                }
+
+                // Show appropriate date inputs based on date range type
+                $('#dateInputs').removeClass('hidden');
+                if (dateRangeType === 'daily') {
                     $('#dailyInputs').removeClass('hidden');
-                } else if (selectedType === 'monthly') {
+                } else if (dateRangeType === 'monthly') {
                     $('#monthlyInputs').removeClass('hidden');
                 }
 
-                initializeEmployeeSelect();
-
+                // Show submit button
                 $('#submitBtn').removeClass('hidden');
             }
-        });
+        }
 
         $('#searchForm').on('submit', function(e) {
             e.preventDefault();
 
             if (validateForm()) {
-                loadEmployeeAttendance();
+                loadAttendanceData();
             }
         });
     });
@@ -370,6 +539,28 @@
 
         $('#selectedMonth').val(String(today.getMonth() + 1).padStart(2, '0'));
         $('#selectedYear').val(today.getFullYear());
+    }
+
+    function loadAreaOptions() {
+        $.ajax({
+            url: '<?php echo base_url('user/get_lokasi'); ?>',
+            type: 'GET',
+            dataType: 'json',
+            success: function(response) {
+                const areaSelect = $('#areaSelect');
+                areaSelect.empty().append('<option value="">-- Pilih Area --</option>');
+
+                if (response && response.length > 0) {
+                    response.forEach(function(area) {
+                        areaSelect.append(
+                            `<option value="${area.id}">${area.nama_lokasi}</option>`);
+                    });
+                }
+            },
+            error: function() {
+                Swal.fire('Error', 'Gagal memuat data lokasi', 'error');
+            }
+        });
     }
 
     function initializeEmployeeSelect() {
@@ -400,19 +591,35 @@
     }
 
     function validateForm() {
+        const dataType = $('#dataType').val();
         const dateRangeType = $('#dateRangeType').val();
-        const selectedEmployee = $('#employeeSelect').val();
+
+        if (!dataType) {
+            Swal.fire('Peringatan', 'Silakan pilih type data terlebih dahulu', 'warning');
+            return false;
+        }
 
         if (!dateRangeType) {
             Swal.fire('Peringatan', 'Silakan pilih jarak waktu terlebih dahulu', 'warning');
             return false;
         }
 
-        if (!selectedEmployee) {
-            Swal.fire('Peringatan', 'Silakan pilih karyawan terlebih dahulu', 'warning');
-            return false;
+        // Validate selection based on data type
+        if (dataType === 'per_orang') {
+            const selectedEmployee = $('#employeeSelect').val();
+            if (!selectedEmployee) {
+                Swal.fire('Peringatan', 'Silakan pilih karyawan terlebih dahulu', 'warning');
+                return false;
+            }
+        } else if (dataType === 'per_area') {
+            const selectedArea = $('#areaSelect').val();
+            if (!selectedArea) {
+                Swal.fire('Peringatan', 'Silakan pilih area terlebih dahulu', 'warning');
+                return false;
+            }
         }
 
+        // Validate date inputs
         if (dateRangeType === 'daily') {
             const startDate = $('#startDate').val();
             const endDate = $('#endDate').val();
@@ -439,10 +646,10 @@
         return true;
     }
 
-    function loadEmployeeAttendance() {
+    function loadAttendanceData() {
         Swal.fire({
             title: 'Memuat data',
-            text: 'Sedang mengambil data absensi...',
+            text: 'Sedang mengambil data...',
             allowOutsideClick: false,
             didOpen: () => {
                 Swal.showLoading()
@@ -452,7 +659,7 @@
         const formData = getFormData();
 
         $.ajax({
-            url: '<?php echo base_url('user/get_absensi_karyawan'); ?>',
+            url: '<?php echo base_url('user/get_absensi_data'); ?>',
             type: 'POST',
             data: formData,
             dataType: 'json',
@@ -460,15 +667,26 @@
                 Swal.close();
 
                 if (response && response.status === 'success') {
+                    // Remove previous summary cards if exist
+                    $('.summary-cards').remove();
+
                     updateAttendanceTable(response.data);
+
+                    // Show summary cards if available
+                    if (response.summary) {
+                        showSummaryCards(response.summary);
+                    }
+
                     Swal.fire({
                         title: 'Berhasil',
-                        text: `Data absensi berhasil dimuat (${response.data.length} record)`,
+                        text: `Data berhasil dimuat (${response.data.length} record)`,
                         icon: 'success',
                         timer: 1500,
                         showConfirmButton: false
                     });
                 } else {
+                    // Remove previous summary cards if exist
+                    $('.summary-cards').remove();
                     updateAttendanceTable([]);
                     Swal.fire('Info', response.message || 'Tidak ada data yang ditemukan', 'info');
                 }
@@ -493,14 +711,22 @@
     }
 
     function getFormData() {
+        const dataType = $('#dataType').val();
         const dateRangeType = $('#dateRangeType').val();
-        const employeeId = $('#employeeSelect').val();
 
         let formData = {
-            employee_id: employeeId,
+            data_type: dataType,
             date_range_type: dateRangeType
         };
 
+        // Add selection based on data type
+        if (dataType === 'per_orang') {
+            formData.employee_id = $('#employeeSelect').val();
+        } else if (dataType === 'per_area') {
+            formData.area_id = $('#areaSelect').val();
+        }
+
+        // Add date range data
         if (dateRangeType === 'daily') {
             formData.start_date = $('#startDate').val();
             formData.end_date = $('#endDate').val();
@@ -512,6 +738,21 @@
         return formData;
     }
 
+    function getTwoWords(name) {
+        if (!name) return '';
+
+        // Pisahkan nama menjadi array kata
+        const words = name.trim().split(/\s+/);
+
+        // Ambil 2 kata pertama
+        if (words.length >= 2) {
+            return words[0] + ' ' + words[1];
+        }
+
+        // Jika hanya ada 1 kata, kembalikan kata tersebut
+        return words[0];
+    }
+
     function updateAttendanceTable(data) {
         const tbody = $('tbody');
         tbody.empty();
@@ -519,9 +760,9 @@
         if (data.length === 0) {
             tbody.append(`
                 <tr>
-                    <td colspan="9" class="text-center py-8 text-gray-500">
+                    <td colspan="13" class="text-center py-8 text-gray-500">
                         <i class="fas fa-inbox text-4xl mb-3 opacity-50"></i>
-                        <p class="text-lg">Tidak ada data absensi yang ditemukan</p>
+                        <p class="text-lg">Tidak ada data yang ditemukan</p>
                     </td>
                 </tr>
             `);
@@ -529,13 +770,39 @@
         }
 
         data.forEach(row => {
-            const statusClass = row.status === 'Masuk' ? 'bg-green-100 text-green-800' :
-                row.status.includes('Belum Pulang') ? 'bg-yellow-100 text-yellow-800' :
-                row.status === 'Izin' ? 'bg-blue-100 text-blue-800' :
-                'bg-red-100 text-red-800';
+            // Tentukan class dan badge berdasarkan type dan status
+            let statusClass = '';
+            let typeClass = '';
+            let typeBadge = '';
+            const shortName = getTwoWords(row.nama_karyawan);
+
+            if (row.type === 'absensi') {
+                typeClass = 'bg-blue-100 text-blue-800';
+                typeBadge = 'Absensi';
+
+                statusClass = row.status === 'Masuk' ? 'bg-green-100 text-green-800' :
+                    row.status.includes('Belum Pulang') ? 'bg-yellow-100 text-yellow-800' :
+                    'bg-red-100 text-red-800';
+            } else if (row.type === 'cuti') {
+                typeClass = 'bg-purple-100 text-purple-800';
+                typeBadge = 'Cuti';
+                statusClass = 'bg-purple-100 text-purple-800';
+            } else if (row.type === 'izin') {
+                typeClass = 'bg-orange-100 text-orange-800';
+                typeBadge = 'Izin';
+                statusClass = 'bg-orange-100 text-orange-800';
+            }
 
             const tr = `
             <tr class="hover:bg-gray-50">
+                <td data-label="Type" class="px-4 py-4 whitespace-nowrap">
+                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${typeClass}">
+                        ${typeBadge}
+                    </span>
+                </td>
+                <td data-label="Nama" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-gray-800">
+                    ${shortName}
+                </td>
                 <td data-label="Tanggal" class="px-4 py-4 whitespace-nowrap text-sm text-gray-800">
                     ${row.tanggal_formatted}
                 </td>
@@ -563,26 +830,63 @@
                         ${row.status}
                     </span>
                 </td>
+                <td data-label="Alasan" class="px-4 py-4 text-sm text-gray-600">
+                    <div class="max-w-40">
+                        ${row.alasan || '-'}
+                    </div>
+                </td>
+                <td data-label="Periode" class="px-4 py-4 text-sm text-gray-600">
+                    <div class="max-w-32">
+                        ${row.periode || '-'}
+                    </div>
+                </td>
                 <td data-label="Keterangan" class="px-4 py-4 text-sm text-gray-600">
                     <div class="max-w-32">
                         ${row.keterangan || '-'}
                     </div>
                 </td>
                 <td data-label="Aksi" class="px-4 py-4 text-sm text-gray-600">
-                    ${(row.foto_masuk || row.foto_pulang) ? 
-                    `<button onclick="showFoto('${row.foto_masuk || ''}','${row.foto_pulang || ''}')" 
-                        class="w-full bg-gradient-to-r from-red-500 to-red-600 text-white py-2 px-3 rounded-lg font-semibold hover:from-red-600 hover:to-red-700 transition-all duration-200">
-                        <i class="fas fa-images mr-1"></i>Lihat Foto
-                    </button>` : 
-                    '<span class="text-gray-400">-</span>'}
+                    ${getActionButtons(row)}
                 </td>
             </tr>
-        `;
+            `;
 
             tbody.append(tr);
         });
     }
 
+    function getActionButtons(row) {
+        let buttons = [];
+
+        // Button untuk foto absensi
+        if (row.type === 'absensi' && (row.foto_masuk || row.foto_pulang)) {
+            buttons.push(`
+                <button onclick="showFoto('${row.foto_masuk || ''}','${row.foto_pulang || ''}')" 
+                    class="mb-1 w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-blue-600 hover:to-blue-700 transition-all duration-200">
+                    <i class="fas fa-images mr-1"></i>Foto Absensi
+                </button>
+            `);
+        }
+
+        // Button untuk foto izin
+        if (row.type === 'izin' && row.foto_dokumen) {
+            buttons.push(`
+                <button onclick="showFotoDokumen('${row.foto_dokumen}')" 
+                    class="mb-1 w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-orange-600 hover:to-orange-700 transition-all duration-200">
+                    <i class="fas fa-file-image mr-1"></i>Foto Izin
+                </button>
+            `);
+        }
+
+        // Jika tidak ada foto
+        if (buttons.length === 0) {
+            return '<span class="text-gray-400">-</span>';
+        }
+
+        return buttons.join('');
+    }
+
+    // Fungsi untuk menampilkan foto absensi
     function showFoto(fotoMasuk, fotoPulang) {
         if (fotoMasuk && fotoMasuk !== '') {
             $('#modalFotoMasuk').attr('src', fotoMasuk).show();
@@ -603,6 +907,62 @@
         $('#fotoModal').removeClass('hidden');
     }
 
+    // Fungsi untuk menampilkan foto dokumen izin
+    function showFotoDokumen(fotoDokumen) {
+        Swal.fire({
+            title: 'Foto Dokumen Izin',
+            imageUrl: fotoDokumen,
+            imageAlt: 'Foto Dokumen Izin',
+            confirmButtonText: 'Tutup',
+            confirmButtonColor: '#3b82f6',
+            imageWidth: 'auto',
+            imageHeight: 'auto',
+            customClass: {
+                image: 'max-w-full max-h-96 object-contain'
+            }
+        });
+    }
+
+    // Fungsi untuk menampilkan summary cards
+    function showSummaryCards(summary) {
+        const summaryHtml = `
+            <div class="summary-cards grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-gray-800">${summary.total_records}</div>
+                    <div class="text-xs text-gray-600">Total Data</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-blue-600">${summary.absensi_count}</div>
+                    <div class="text-xs text-gray-600">Absensi</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-purple-600">${summary.cuti_count}</div>
+                    <div class="text-xs text-gray-600">Cuti</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-orange-600">${summary.izin_count}</div>
+                    <div class="text-xs text-gray-600">Izin</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-green-600">${summary.present_days}</div>
+                    <div class="text-xs text-gray-600">Hadir</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-yellow-600">${summary.late_days}</div>
+                    <div class="text-xs text-gray-600">Terlambat</div>
+                </div>
+                <div class="bg-white rounded-lg shadow p-4 text-center">
+                    <div class="text-2xl font-bold text-red-600">${summary.incomplete_days}</div>
+                    <div class="text-xs text-gray-600">Belum Pulang</div>
+                </div>
+            </div>
+        `;
+
+        // Insert summary before table
+        $('.bg-white.rounded-2xl.shadow-lg.p-6.border.border-gray-200.overflow-x-auto').before(summaryHtml);
+    }
+
+    // Modal close handlers
     $('#closeModal').on('click', function() {
         $('#fotoModal').addClass('hidden');
     });
@@ -613,6 +973,7 @@
         }
     });
 
+    // User dropdown and logout handlers
     const userDropdownBtn = document.getElementById('userDropdownBtn');
     const userDropdown = document.getElementById('userDropdown');
     const logoutBtn = document.getElementById('logoutBtn');
