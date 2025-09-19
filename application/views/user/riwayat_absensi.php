@@ -293,10 +293,14 @@
                         </div>
                     </div>
 
-                    <div class="flex justify-end">
+                    <div class="flex flex-col sm:flex-row justify-end gap-3">
                         <button type="submit" id="submitBtn"
-                            class="hidden bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200">
+                            class="hidden bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200 shadow-md">
                             <i class="fas fa-search mr-2"></i>Tampilkan Data
+                        </button>
+                        <button type="button" id="exportBtn"
+                            class="hidden bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200 shadow-md">
+                            <i class="fas fa-file-excel mr-2"></i>Export Excel
                         </button>
                     </div>
                 </form>
@@ -439,6 +443,29 @@
         </div>
     </div>
 
+    <div id="exportLoadingModal"
+        class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+        <div class="relative top-1/2 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white transform -translate-y-1/2">
+            <div class="mt-3 text-center">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100">
+                    <i class="fas fa-file-excel text-green-600 text-2xl animate-pulse"></i>
+                </div>
+                <h3 class="text-lg leading-6 font-medium text-gray-900 mt-4">Processing Export</h3>
+                <div class="mt-2 px-7 py-3">
+                    <p class="text-sm text-gray-500">
+                        Sedang memproses data untuk export Excel...<br>
+                        <span class="text-xs">Mohon tunggu beberapa saat</span>
+                    </p>
+                    <div class="mt-4">
+                        <div class="bg-gray-200 rounded-full h-2">
+                            <div class="bg-green-600 h-2 rounded-full animate-pulse" style="width: 70%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js"></script>
     <script>
     $(document).ready(function() {
@@ -506,9 +533,296 @@
                     $('#monthlyInputs').removeClass('hidden');
                 }
 
-                // Show submit button
-                $('#submitBtn').removeClass('hidden');
+                // Show submit button and export button
+                $('#submitBtn, #exportBtn').removeClass('hidden');
             }
+        }
+
+        $('#exportBtn').on('click', function(e) {
+            e.preventDefault();
+
+            if (validateForm()) {
+                exportToExcel();
+            }
+        });
+
+        function exportToExcel() {
+            // Tampilkan dialog progress dengan estimasi waktu
+            const exportPromise = new Promise((resolve, reject) => {
+                Swal.fire({
+                    title: 'Mempersiapkan Laporan Excel',
+                    html: `
+                <div class="export-progress">
+                    <div class="progress-bar">
+                        <div class="progress"></div>
+                    </div>
+                    <div class="progress-text">Mengumpulkan data... 0%</div>
+                    <div class="time-remaining">Estimasi waktu: <span class="time">15</span> detik</div>
+                </div>
+            `,
+                    showConfirmButton: false,
+                    allowOutsideClick: false,
+                    didOpen: () => {
+                        // Simulasi progres dengan estimasi waktu lebih realistis
+                        const progressBar = Swal.getHtmlContainer().querySelector(
+                            '.progress');
+                        const progressText = Swal.getHtmlContainer().querySelector(
+                            '.progress-text');
+                        const timeRemaining = Swal.getHtmlContainer().querySelector(
+                            '.time');
+
+                        let progress = 0;
+                        let timeEstimate = 5; // Estimasi awal 5 detik
+
+                        const interval = setInterval(() => {
+                            progress +=
+                                20; // Naik 20% tiap 500ms -> 5 detik selesai
+                            if (progress >= 100) {
+                                progress = 100;
+                                clearInterval(interval);
+                                resolve();
+                            }
+
+                            // Update progress bar dan teks
+                            progressBar.style.width = `${progress}%`;
+                            progressText.textContent =
+                                `Mempersiapkan file... ${Math.round(progress)}%`;
+
+                            // Perbarui estimasi waktu
+                            timeEstimate = Math.max(1, Math.round((100 - progress) /
+                                20 * 0.5));
+                            timeRemaining.textContent = timeEstimate;
+
+                        }, 500); // Update setiap 500ms
+                        // Update setiap 500ms
+                    }
+                });
+            });
+
+            // Setelah simulasi progres selesai, lakukan export sebenarnya
+            exportPromise.then(() => {
+                // Sembunyikan Swal progres
+                Swal.close();
+
+                // Tampilkan notifikasi bahwa download akan segera dimulai
+                Swal.fire({
+                    title: 'File Siap!',
+                    text: 'Download akan segera dimulai...',
+                    icon: 'success',
+                    timer: 2000,
+                    showConfirmButton: false
+                });
+
+                // Lakukan request export sebenarnya
+                const formData = getFormData();
+                const form = new FormData();
+
+                for (const [key, value] of Object.entries(formData)) {
+                    form.append(key, value);
+                }
+
+                // Gunakan pendekatan fetch dengan Blob untuk handling yang lebih baik
+                fetch('<?php echo base_url('user/export_excel'); ?>', {
+                        method: 'POST',
+                        body: form
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.blob();
+                    })
+                    .then(blob => {
+                        // Buat URL untuk blob dan trigger download
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download =
+                            `Laporan_Absensi_${new Date().toISOString().split('T')[0]}.xlsx`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                        // Tampilkan notifikasi sukses
+                        Swal.fire({
+                            title: 'Download Berhasil!',
+                            text: 'File Excel telah berhasil diunduh',
+                            icon: 'success',
+                            timer: 3000,
+                            showConfirmButton: false
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error exporting to Excel:', error);
+                        Swal.fire({
+                            title: 'Export Gagal',
+                            text: 'Terjadi kesalahan saat mengekspor data: ' + error
+                                .message,
+                            icon: 'error',
+                            confirmButtonColor: '#dc2626'
+                        });
+                    });
+            });
+        }
+
+        // Tambahkan CSS untuk progress bar yang lebih menarik
+        const exportStyles = `
+            .export-progress {
+                width: 100%;
+                padding: 10px 0;
+            }
+            .progress-bar {
+                width: 100%;
+                height: 20px;
+                background-color: #f3f4f6;
+                border-radius: 10px;
+                overflow: hidden;
+                margin-bottom: 10px;
+            }
+            .progress {
+                height: 100%;
+                background-color: #10b981;
+                border-radius: 10px;
+                width: 0%;
+                transition: width 0.5s ease;
+            }
+            .progress-text {
+                text-align: center;
+                margin-bottom: 5px;
+                font-weight: bold;
+            }
+            .time-remaining {
+                text-align: center;
+                font-size: 0.9em;
+                color: #6b7280;
+            }
+        `;
+
+        // Inject styles
+        const styleSheet = document.createElement('style');
+        styleSheet.textContent = exportStyles;
+        document.head.appendChild(styleSheet);
+
+
+        // Alternative simpler version using XMLHttpRequest for blob handling
+        function exportToExcelAlt() {
+            Swal.fire({
+                title: 'Export ke Excel',
+                text: 'Sedang memproses data untuk export...',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading()
+                }
+            });
+
+            const formData = getFormData();
+
+            // Convert object to FormData
+            const form = new FormData();
+            for (const [key, value] of Object.entries(formData)) {
+                form.append(key, value);
+            }
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '<?php echo base_url('user/export_excel'); ?>', true);
+            xhr.responseType = 'blob';
+
+            xhr.onload = function() {
+                Swal.close();
+
+                if (xhr.status === 200) {
+                    // Check if response is actually a blob (Excel file)
+                    if (xhr.response.type ===
+                        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+                        // Create blob URL and trigger download
+                        const blob = new Blob([xhr.response], {
+                            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                        });
+                        const url = window.URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = 'Laporan_Absensi_' + new Date().toISOString().split('T')[0] +
+                            '.xlsx';
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        window.URL.revokeObjectURL(url);
+
+                        Swal.fire({
+                            title: 'Export Berhasil!',
+                            text: 'File Excel berhasil didownload',
+                            icon: 'success',
+                            timer: 2000,
+                            showConfirmButton: false
+                        });
+                    } else {
+                        // Response is likely JSON error message
+                        const reader = new FileReader();
+                        reader.onload = function() {
+                            try {
+                                const errorData = JSON.parse(reader.result);
+                                Swal.fire({
+                                    title: 'Export Gagal',
+                                    text: errorData.message || 'Gagal membuat file Excel',
+                                    icon: 'error',
+                                    confirmButtonColor: '#dc2626'
+                                });
+                            } catch (e) {
+                                Swal.fire({
+                                    title: 'Export Gagal',
+                                    text: 'Terjadi kesalahan saat export data',
+                                    icon: 'error',
+                                    confirmButtonColor: '#dc2626'
+                                });
+                            }
+                        };
+                        reader.readAsText(xhr.response);
+                    }
+                } else {
+                    Swal.fire({
+                        title: 'Export Error',
+                        text: 'Terjadi kesalahan saat export data (Status: ' + xhr.status + ')',
+                        icon: 'error',
+                        confirmButtonColor: '#dc2626'
+                    });
+                }
+            };
+
+            xhr.onerror = function() {
+                Swal.close();
+                Swal.fire({
+                    title: 'Export Error',
+                    text: 'Terjadi kesalahan koneksi saat export data',
+                    icon: 'error',
+                    confirmButtonColor: '#dc2626'
+                });
+            };
+
+            xhr.send(form);
+        }
+
+        // 6. Tambahkan notifikasi loading yang lebih informatif
+        function showExportProgress() {
+            let timerInterval;
+            Swal.fire({
+                title: 'Memproses Export Excel',
+                html: 'Sedang mengumpulkan data... <b></b> detik',
+                timer: 30000,
+                timerProgressBar: true,
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                    const b = Swal.getHtmlContainer().querySelector('b');
+                    timerInterval = setInterval(() => {
+                        b.textContent = Math.ceil(Swal.getTimerLeft() / 1000);
+                    }, 100);
+                },
+                willClose: () => {
+                    clearInterval(timerInterval);
+                }
+            });
         }
 
         $('#searchForm').on('submit', function(e) {
@@ -759,13 +1073,13 @@
 
         if (data.length === 0) {
             tbody.append(`
-                <tr>
-                    <td colspan="13" class="text-center py-8 text-gray-500">
-                        <i class="fas fa-inbox text-4xl mb-3 opacity-50"></i>
-                        <p class="text-lg">Tidak ada data yang ditemukan</p>
-                    </td>
-                </tr>
-            `);
+                    <tr>
+                        <td colspan="13" class="text-center py-8 text-gray-500">
+                            <i class="fas fa-inbox text-4xl mb-3 opacity-50"></i>
+                            <p class="text-lg">Tidak ada data yang ditemukan</p>
+                        </td>
+                    </tr>
+                `);
             return;
         }
 
@@ -794,62 +1108,62 @@
             }
 
             const tr = `
-            <tr class="hover:bg-gray-50">
-                <td data-label="Type" class="px-4 py-4 whitespace-nowrap">
-                    <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${typeClass}">
-                        ${typeBadge}
-                    </span>
-                </td>
-                <td data-label="Nama" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-gray-800">
-                    ${shortName}
-                </td>
-                <td data-label="Tanggal" class="px-4 py-4 whitespace-nowrap text-sm text-gray-800">
-                    ${row.tanggal_formatted}
-                </td>
-                <td data-label="Hari" class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
-                    ${row.hari}
-                </td>
-                <td data-label="Jam Masuk" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-blue-600">
-                    ${row.jam_masuk || '-'}
-                </td>
-                <td data-label="Lokasi Masuk" class="px-4 py-4 text-sm text-gray-600">
-                    <div class="max-w-32">
-                        ${row.lokasi_masuk || '-'}
-                    </div>
-                </td>
-                <td data-label="Jam Pulang" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-blue-600">
-                    ${row.jam_pulang || '-'}
-                </td>
-                <td data-label="Lokasi Pulang" class="px-4 py-4 text-sm text-gray-600">
-                    <div class="max-w-32">
-                        ${row.lokasi_pulang || '-'}
-                    </div>
-                </td>
-                <td data-label="Status" class="px-4 py-4 whitespace-nowrap">
-                    <span class="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
-                        ${row.status}
-                    </span>
-                </td>
-                <td data-label="Alasan" class="px-4 py-4 text-sm text-gray-600">
-                    <div class="max-w-40">
-                        ${row.alasan || '-'}
-                    </div>
-                </td>
-                <td data-label="Periode" class="px-4 py-4 text-sm text-gray-600">
-                    <div class="max-w-32">
-                        ${row.periode || '-'}
-                    </div>
-                </td>
-                <td data-label="Keterangan" class="px-4 py-4 text-sm text-gray-600">
-                    <div class="max-w-32">
-                        ${row.keterangan || '-'}
-                    </div>
-                </td>
-                <td data-label="Aksi" class="px-4 py-4 text-sm text-gray-600">
-                    ${getActionButtons(row)}
-                </td>
-            </tr>
-            `;
+                <tr class="hover:bg-gray-50">
+                    <td data-label="Type" class="px-4 py-4 whitespace-nowrap">
+                        <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${typeClass}">
+                            ${typeBadge}
+                        </span>
+                    </td>
+                    <td data-label="Nama" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-gray-800">
+                        ${shortName}
+                    </td>
+                    <td data-label="Tanggal" class="px-4 py-4 whitespace-nowrap text-sm text-gray-800">
+                        ${row.tanggal_formatted}
+                    </td>
+                    <td data-label="Hari" class="px-4 py-4 whitespace-nowrap text-sm text-gray-600">
+                        ${row.hari}
+                    </td>
+                    <td data-label="Jam Masuk" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-blue-600">
+                        ${row.jam_masuk || '-'}
+                    </td>
+                    <td data-label="Lokasi Masuk" class="px-4 py-4 text-sm text-gray-600">
+                        <div class="max-w-32">
+                            ${row.lokasi_masuk || '-'}
+                        </div>
+                    </td>
+                    <td data-label="Jam Pulang" class="px-4 py-4 whitespace-nowrap text-sm font-semibold text-blue-600">
+                        ${row.jam_pulang || '-'}
+                    </td>
+                    <td data-label="Lokasi Pulang" class="px-4 py-4 text-sm text-gray-600">
+                        <div class="max-w-32">
+                            ${row.lokasi_pulang || '-'}
+                        </div>
+                    </td>
+                    <td data-label="Status" class="px-4 py-4 whitespace-nowrap">
+                        <span class="px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}">
+                            ${row.status}
+                        </span>
+                    </td>
+                    <td data-label="Alasan" class="px-4 py-4 text-sm text-gray-600">
+                        <div class="max-w-40">
+                            ${row.alasan || '-'}
+                        </div>
+                    </td>
+                    <td data-label="Periode" class="px-4 py-4 text-sm text-gray-600">
+                        <div class="max-w-32">
+                            ${row.periode || '-'}
+                        </div>
+                    </td>
+                    <td data-label="Keterangan" class="px-4 py-4 text-sm text-gray-600">
+                        <div class="max-w-32">
+                            ${row.keterangan || '-'}
+                        </div>
+                    </td>
+                    <td data-label="Aksi" class="px-4 py-4 text-sm text-gray-600">
+                        ${getActionButtons(row)}
+                    </td>
+                </tr>
+                `;
 
             tbody.append(tr);
         });
@@ -861,21 +1175,21 @@
         // Button untuk foto absensi
         if (row.type === 'absensi' && (row.foto_masuk || row.foto_pulang)) {
             buttons.push(`
-                <button onclick="showFoto('${row.foto_masuk || ''}','${row.foto_pulang || ''}')" 
-                    class="mb-1 w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-blue-600 hover:to-blue-700 transition-all duration-200">
-                    <i class="fas fa-images mr-1"></i>Foto Absensi
-                </button>
-            `);
+                    <button onclick="showFoto('${row.foto_masuk || ''}','${row.foto_pulang || ''}')" 
+                        class="mb-1 w-full bg-gradient-to-r from-blue-500 to-blue-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-blue-600 hover:to-blue-700 transition-all duration-200">
+                        <i class="fas fa-images mr-1"></i>Foto Absensi
+                    </button>
+                `);
         }
 
         // Button untuk foto izin
         if (row.type === 'izin' && row.foto_dokumen) {
             buttons.push(`
-                <button onclick="showFotoDokumen('${row.foto_dokumen}')" 
-                    class="mb-1 w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-orange-600 hover:to-orange-700 transition-all duration-200">
-                    <i class="fas fa-file-image mr-1"></i>Foto Izin
-                </button>
-            `);
+                    <button onclick="showFotoDokumen('${row.foto_dokumen}')" 
+                        class="mb-1 w-full bg-gradient-to-r from-orange-500 to-orange-600 text-white py-1 px-2 rounded text-xs font-semibold hover:from-orange-600 hover:to-orange-700 transition-all duration-200">
+                        <i class="fas fa-file-image mr-1"></i>Foto Izin
+                    </button>
+                `);
         }
 
         // Jika tidak ada foto
@@ -926,37 +1240,37 @@
     // Fungsi untuk menampilkan summary cards
     function showSummaryCards(summary) {
         const summaryHtml = `
-            <div class="summary-cards grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-gray-800">${summary.total_records}</div>
-                    <div class="text-xs text-gray-600">Total Data</div>
+                <div class="summary-cards grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-gray-800">${summary.total_records}</div>
+                        <div class="text-xs text-gray-600">Total Data</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-blue-600">${summary.absensi_count}</div>
+                        <div class="text-xs text-gray-600">Absensi</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-purple-600">${summary.cuti_count}</div>
+                        <div class="text-xs text-gray-600">Cuti</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-orange-600">${summary.izin_count}</div>
+                        <div class="text-xs text-gray-600">Izin</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-green-600">${summary.present_days}</div>
+                        <div class="text-xs text-gray-600">Hadir</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-yellow-600">${summary.late_days}</div>
+                        <div class="text-xs text-gray-600">Terlambat</div>
+                    </div>
+                    <div class="bg-white rounded-lg shadow p-4 text-center">
+                        <div class="text-2xl font-bold text-red-600">${summary.incomplete_days}</div>
+                        <div class="text-xs text-gray-600">Belum Pulang</div>
+                    </div>
                 </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-blue-600">${summary.absensi_count}</div>
-                    <div class="text-xs text-gray-600">Absensi</div>
-                </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-purple-600">${summary.cuti_count}</div>
-                    <div class="text-xs text-gray-600">Cuti</div>
-                </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-orange-600">${summary.izin_count}</div>
-                    <div class="text-xs text-gray-600">Izin</div>
-                </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-green-600">${summary.present_days}</div>
-                    <div class="text-xs text-gray-600">Hadir</div>
-                </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-yellow-600">${summary.late_days}</div>
-                    <div class="text-xs text-gray-600">Terlambat</div>
-                </div>
-                <div class="bg-white rounded-lg shadow p-4 text-center">
-                    <div class="text-2xl font-bold text-red-600">${summary.incomplete_days}</div>
-                    <div class="text-xs text-gray-600">Belum Pulang</div>
-                </div>
-            </div>
-        `;
+            `;
 
         // Insert summary before table
         $('.bg-white.rounded-2xl.shadow-lg.p-6.border.border-gray-200.overflow-x-auto').before(summaryHtml);

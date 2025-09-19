@@ -1381,4 +1381,453 @@ private function generateCombinedSummary($data) {
             }
         }
     }
+
+    public function export_excel()
+{
+    try {
+        $this->authorize(['admin']);
+        
+        // Load PhpSpreadsheet library
+        require_once APPPATH . '../vendor/autoload.php';
+        
+        $data_type = $this->input->post('data_type');
+        $date_range_type = $this->input->post('date_range_type');
+        
+        if (empty($data_type) || empty($date_range_type)) {
+            $this->output->set_status_header(400);
+            echo json_encode(array(
+                'status' => 'error',
+                'message' => 'Type data dan jarak waktu harus dipilih'
+            ));
+            return;
+        }
+
+        // Validasi dan set date range
+        if ($date_range_type === 'daily') {
+            $start_date = $this->input->post('start_date');
+            $end_date = $this->input->post('end_date');
+            
+            if (empty($start_date) || empty($end_date)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Tanggal mulai dan tanggal akhir harus diisi'
+                ));
+                return;
+            }
+            
+            if (strtotime($start_date) > strtotime($end_date)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir'
+                ));
+                return;
+            }
+            
+        } elseif ($date_range_type === 'monthly') {
+            $month = $this->input->post('month');
+            $year = $this->input->post('year');
+            
+            if (empty($month) || empty($year)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Bulan dan tahun harus diisi'
+                ));
+                return;
+            }
+            
+            $start_date = $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT) . '-01';
+            $end_date = date('Y-m-t', strtotime($start_date));
+        }
+
+        // Query berdasarkan data type
+        if ($data_type === 'per_orang') {
+            $employee_id = $this->input->post('employee_id');
+            
+            if (empty($employee_id)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'ID karyawan tidak valid'
+                ));
+                return;
+            }
+
+            $combined_data = $this->getCombinedDataByEmployee($employee_id, $start_date, $end_date);
+            
+            // Get employee name for filename
+            $this->db->where('id', $employee_id);
+            $employee = $this->db->get('user')->row();
+            $filename_prefix = 'Data_Karyawan_' . str_replace(' ', '_', $employee->nama);
+            
+        } elseif ($data_type === 'per_area') {
+            $area_id = $this->input->post('area_id');
+            
+            if (empty($area_id)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'ID area tidak valid'
+                ));
+                return;
+            }
+
+            $combined_data = $this->getCombinedDataByArea($area_id, $start_date, $end_date);
+            
+            // Get area name for filename
+            $this->db->where('id', $area_id);
+            $location = $this->db->get('lokasi')->row();
+            $filename_prefix = 'Data_Area_' . str_replace(' ', '_', $location->nama_lokasi);
+        }
+
+        if (empty($combined_data)) {
+            $this->output->set_status_header(404);
+            echo json_encode(array(
+                'status' => 'error',
+                'message' => 'Tidak ada data untuk diexport'
+            ));
+            return;
+        }
+
+        $formatted_data = $this->formatCombinedData($combined_data);
+        $summary = $this->generateCombinedSummary($formatted_data);
+        
+        // Generate and stream Excel file directly
+        $this->streamExcelFile($formatted_data, $summary, $start_date, $end_date, $filename_prefix, $data_type, $date_range_type);
+        
+    } catch (Exception $e) {
+        log_message('error', 'Error in export_excel: ' . $e->getMessage());
+        $this->output->set_status_header(500);
+        echo json_encode(array(
+            'status' => 'error',
+            'message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()
+        ));
+    }
+}
+
+private function streamExcelFile($data, $summary, $start_date, $end_date, $filename_prefix, $data_type, $date_range_type)
+{
+    try {
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set sheet name
+        $sheet->setTitle('Laporan Absensi');
+        
+        // Header Information
+        $sheet->setCellValue('A1', 'LAPORAN DATA ABSENSI, CUTI & IZIN');
+        $sheet->mergeCells('A1:M1');
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(16);
+        $sheet->getStyle('A1')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        
+        $sheet->setCellValue('A2', 'PT. MANDIRI DAYA ANDALAN');
+        $sheet->mergeCells('A2:M2');
+        $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle('A2')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        
+        // Period Information
+        $period_text = $this->formatDateRange($date_range_type, $start_date, $end_date);
+        $sheet->setCellValue('A4', 'Periode: ' . $period_text);
+        $sheet->mergeCells('A4:M4');
+        $sheet->getStyle('A4')->getFont()->setBold(true);
+        
+        $sheet->setCellValue('A5', 'Tanggal Export: ' . date('d F Y H:i:s'));
+        $sheet->mergeCells('A5:M5');
+        
+        $sheet->setCellValue('A6', 'Type Data: ' . ($data_type === 'per_orang' ? 'Per Karyawan' : 'Per Area'));
+        $sheet->mergeCells('A6:M6');
+        
+        // Summary Section
+        $row = 8;
+        $sheet->setCellValue('A' . $row, 'RINGKASAN DATA');
+        $sheet->mergeCells('A' . $row . ':M' . $row);
+        $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle('A' . $row)->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                ->getStartColor()->setARGB('FFE0E0E0');
+        
+        $row++;
+        $sheet->setCellValue('A' . $row, 'Total Data: ' . $summary['total_records']);
+        $sheet->setCellValue('C' . $row, 'Absensi: ' . $summary['absensi_count']);
+        $sheet->setCellValue('E' . $row, 'Cuti: ' . $summary['cuti_count']);
+        $sheet->setCellValue('G' . $row, 'Izin: ' . $summary['izin_count']);
+        
+        $row++;
+        $sheet->setCellValue('A' . $row, 'Hari Hadir: ' . $summary['present_days']);
+        $sheet->setCellValue('C' . $row, 'Terlambat: ' . $summary['late_days']);
+        $sheet->setCellValue('E' . $row, 'Belum Pulang: ' . $summary['incomplete_days']);
+        $sheet->setCellValue('G' . $row, 'Tingkat Kehadiran: ' . $summary['attendance_rate'] . '%');
+        
+        // Table Headers
+        $row += 2;
+        $headers = [
+            'A' => 'No',
+            'B' => 'Type',
+            'C' => 'Nama Karyawan',
+            'D' => 'Tanggal',
+            'E' => 'Hari',
+            'F' => 'Jam Masuk',
+            'G' => 'Lokasi Masuk',
+            'H' => 'Jam Pulang',
+            'I' => 'Lokasi Pulang',
+            'J' => 'Status',
+            'K' => 'Alasan',
+            'L' => 'Periode',
+            'M' => 'Keterangan'
+        ];
+        
+        foreach ($headers as $col => $header) {
+            $sheet->setCellValue($col . $row, $header);
+        }
+        
+        // Style headers
+        $headerRange = 'A' . $row . ':M' . $row;
+        $sheet->getStyle($headerRange)->getFont()->setBold(true);
+        $sheet->getStyle($headerRange)->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                ->getStartColor()->setARGB('FFD0D0D0');
+        $sheet->getStyle($headerRange)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        
+        // Data Rows
+        $dataStartRow = $row + 1;
+        $no = 1;
+        
+        foreach ($data as $record) {
+            $row++;
+            
+            $sheet->setCellValue('A' . $row, $no);
+            $sheet->setCellValue('B' . $row, ucfirst($record['type']));
+            $sheet->setCellValue('C' . $row, $record['nama_karyawan']);
+            $sheet->setCellValue('D' . $row, $record['tanggal_formatted']);
+            $sheet->setCellValue('E' . $row, $record['hari']);
+            $sheet->setCellValue('F' . $row, $record['jam_masuk'] ?: '-');
+            $sheet->setCellValue('G' . $row, $this->cleanLocationText($record['lokasi_masuk']) ?: '-');
+            $sheet->setCellValue('H' . $row, $record['jam_pulang'] ?: '-');
+            $sheet->setCellValue('I' . $row, $this->cleanLocationText($record['lokasi_pulang']) ?: '-');
+            $sheet->setCellValue('J' . $row, $record['status']);
+            $sheet->setCellValue('K' . $row, $record['alasan'] ?: '-');
+            $sheet->setCellValue('L' . $row, $record['periode'] ?: '-');
+            $sheet->setCellValue('M' . $row, $record['keterangan'] ?: '-');
+            
+            $no++;
+        }
+        
+        // Style data rows
+        $dataRange = 'A' . $dataStartRow . ':M' . $row;
+        $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        
+        // Auto-size columns
+        foreach (range('A', 'M') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        
+        // Set maximum width for location columns to prevent too wide columns
+        $sheet->getColumnDimension('G')->setWidth(30);
+        $sheet->getColumnDimension('I')->setWidth(30);
+        $sheet->getColumnDimension('K')->setWidth(25);
+        $sheet->getColumnDimension('M')->setWidth(35);
+        
+        // Generate filename
+        $date_suffix = date('Y-m-d_H-i-s');
+        $filename = $filename_prefix . '_' . $date_suffix . '.xlsx';
+        
+        // Set headers for file download
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        header('Cache-Control: max-age=1');
+        header('Expires: Mon, 26 Jul 1997 05:00:00 GMT');
+        header('Last-Modified: ' . gmdate('D, d M Y H:i:s') . ' GMT');
+        header('Cache-Control: cache, must-revalidate');
+        header('Pragma: public');
+        
+        // Create writer and output directly to browser
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        
+        // Output directly to php://output (browser)
+        $writer->save('php://output');
+        
+        // Clean up memory
+        $spreadsheet->disconnectWorksheets();
+        unset($spreadsheet);
+        
+        // Exit to prevent any additional output
+        exit;
+        
+    } catch (Exception $e) {
+        log_message('error', 'Error streaming Excel file: ' . $e->getMessage());
+        
+        // Clear any output and send error response
+        if (!headers_sent()) {
+            header('Content-Type: application/json');
+            http_response_code(500);
+        }
+        echo json_encode(array(
+            'status' => 'error',
+            'message' => 'Terjadi kesalahan saat membuat file: ' . $e->getMessage()
+        ));
+        exit;
+    }
+}
+
+    private function generateExcelFile($data, $summary, $start_date, $end_date, $filename_prefix, $data_type, $date_range_type)
+    {
+        try {
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            
+            // Set sheet name
+            $sheet->setTitle('Laporan Absensi');
+            
+            // Header Information
+            $sheet->setCellValue('A1', 'LAPORAN DATA ABSENSI, CUTI & IZIN');
+            $sheet->mergeCells('A1:M1');
+            $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(16);
+            $sheet->getStyle('A1')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            
+            $sheet->setCellValue('A2', 'PT. MANDIRI DAYA ANDALAN');
+            $sheet->mergeCells('A2:M2');
+            $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(12);
+            $sheet->getStyle('A2')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            
+            // Period Information
+            $period_text = $this->formatDateRange($date_range_type, $start_date, $end_date);
+            $sheet->setCellValue('A4', 'Periode: ' . $period_text);
+            $sheet->mergeCells('A4:M4');
+            $sheet->getStyle('A4')->getFont()->setBold(true);
+            
+            $sheet->setCellValue('A5', 'Tanggal Export: ' . date('d F Y H:i:s'));
+            $sheet->mergeCells('A5:M5');
+            
+            $sheet->setCellValue('A6', 'Type Data: ' . ($data_type === 'per_orang' ? 'Per Karyawan' : 'Per Area'));
+            $sheet->mergeCells('A6:M6');
+            
+            // Summary Section
+            $row = 8;
+            $sheet->setCellValue('A' . $row, 'RINGKASAN DATA');
+            $sheet->mergeCells('A' . $row . ':M' . $row);
+            $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(12);
+            $sheet->getStyle('A' . $row)->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    ->getStartColor()->setARGB('FFE0E0E0');
+            
+            $row++;
+            $sheet->setCellValue('A' . $row, 'Total Data: ' . $summary['total_records']);
+            $sheet->setCellValue('C' . $row, 'Absensi: ' . $summary['absensi_count']);
+            $sheet->setCellValue('E' . $row, 'Cuti: ' . $summary['cuti_count']);
+            $sheet->setCellValue('G' . $row, 'Izin: ' . $summary['izin_count']);
+            
+            $row++;
+            $sheet->setCellValue('A' . $row, 'Hari Hadir: ' . $summary['present_days']);
+            $sheet->setCellValue('C' . $row, 'Terlambat: ' . $summary['late_days']);
+            $sheet->setCellValue('E' . $row, 'Belum Pulang: ' . $summary['incomplete_days']);
+            $sheet->setCellValue('G' . $row, 'Tingkat Kehadiran: ' . $summary['attendance_rate'] . '%');
+            
+            // Table Headers
+            $row += 2;
+            $headers = [
+                'A' => 'No',
+                'B' => 'Type',
+                'C' => 'Nama Karyawan',
+                'D' => 'Tanggal',
+                'E' => 'Hari',
+                'F' => 'Jam Masuk',
+                'G' => 'Lokasi Masuk',
+                'H' => 'Jam Pulang',
+                'I' => 'Lokasi Pulang',
+                'J' => 'Status',
+                'K' => 'Alasan',
+                'L' => 'Periode',
+                'M' => 'Keterangan'
+            ];
+            
+            foreach ($headers as $col => $header) {
+                $sheet->setCellValue($col . $row, $header);
+            }
+            
+            // Style headers
+            $headerRange = 'A' . $row . ':M' . $row;
+            $sheet->getStyle($headerRange)->getFont()->setBold(true);
+            $sheet->getStyle($headerRange)->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    ->getStartColor()->setARGB('FFD0D0D0');
+            $sheet->getStyle($headerRange)->getBorders()->getAllBorders()
+                    ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            
+            // Data Rows
+            $dataStartRow = $row + 1;
+            $no = 1;
+            
+            foreach ($data as $record) {
+                $row++;
+                
+                $sheet->setCellValue('A' . $row, $no);
+                $sheet->setCellValue('B' . $row, ucfirst($record['type']));
+                $sheet->setCellValue('C' . $row, $record['nama_karyawan']);
+                $sheet->setCellValue('D' . $row, $record['tanggal_formatted']);
+                $sheet->setCellValue('E' . $row, $record['hari']);
+                $sheet->setCellValue('F' . $row, $record['jam_masuk'] ?: '-');
+                $sheet->setCellValue('G' . $row, $this->cleanLocationText($record['lokasi_masuk']) ?: '-');
+                $sheet->setCellValue('H' . $row, $record['jam_pulang'] ?: '-');
+                $sheet->setCellValue('I' . $row, $this->cleanLocationText($record['lokasi_pulang']) ?: '-');
+                $sheet->setCellValue('J' . $row, $record['status']);
+                $sheet->setCellValue('K' . $row, $record['alasan'] ?: '-');
+                $sheet->setCellValue('L' . $row, $record['periode'] ?: '-');
+                $sheet->setCellValue('M' . $row, $record['keterangan'] ?: '-');
+                
+                $no++;
+            }
+            
+            // Style data rows
+            $dataRange = 'A' . $dataStartRow . ':M' . $row;
+            $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
+                    ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            
+            // Auto-size columns
+            foreach (range('A', 'M') as $col) {
+                $sheet->getColumnDimension($col)->setAutoSize(true);
+            }
+            
+            // Set maximum width for location columns to prevent too wide columns
+            $sheet->getColumnDimension('G')->setWidth(30);
+            $sheet->getColumnDimension('I')->setWidth(30);
+            $sheet->getColumnDimension('K')->setWidth(25);
+            $sheet->getColumnDimension('M')->setWidth(35);
+            
+            // Create export directory if not exists
+            $export_dir = FCPATH . 'exports/';
+            if (!is_dir($export_dir)) {
+                mkdir($export_dir, 0755, true);
+            }
+            
+            // Generate filename
+            $date_suffix = date('Y-m-d_H-i-s');
+            $filename = $filename_prefix . '_' . $date_suffix . '.xlsx';
+            $filepath = $export_dir . $filename;
+            
+            // Save file
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            $writer->save($filepath);
+            
+            // Clean up memory
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+            
+            return 'exports/' . $filename;
+            
+        } catch (Exception $e) {
+            log_message('error', 'Error generating Excel file: ' . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function cleanLocationText($location_text)
+    {
+        if (empty($location_text)) {
+            return '';
+        }
+        
+        // Remove coordinates from location text for cleaner Excel display
+        return preg_replace('/\s*\([^)]*\)$/', '', $location_text);
+    }
 }
