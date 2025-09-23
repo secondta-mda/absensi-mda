@@ -47,66 +47,11 @@ class User extends CI_Controller {
             ->where('YEAR(awal_izin)', $tahun)
             ->count_all_results('izin');
 
-        $query = $this->db->query("
-            SELECT 
-                a.tanggal, 
-                a.jam_masuk, 
-                a.jam_pulang, 
-                lm.nama_lokasi AS lokasi_masuk, 
-                lp.nama_lokasi AS lokasi_pulang,
-                IF(a.jam_masuk IS NOT NULL, 'Masuk', 'Tidak Masuk') as status,
-                CONCAT(
-                    IFNULL(a.keterangan_pulang, ''), 
-                    IF(a.durasi_kerja IS NOT NULL, 
-                        CONCAT(' (', 
-                            FLOOR(a.durasi_kerja), ' jam ', 
-                            LPAD(ROUND((a.durasi_kerja - FLOOR(a.durasi_kerja)) * 100), 2, '0'), 
-                            ' menit)'
-                        ), 
-                        ''
-                    )
-                ) as keterangan
-            FROM absensi a
-            LEFT JOIN lokasi lm ON a.id_lokasi_masuk = lm.id
-            LEFT JOIN lokasi lp ON a.id_lokasi_pulang = lp.id
-            WHERE a.user_id = ? 
-            AND MONTH(a.tanggal) = ? 
-            AND YEAR(a.tanggal) = ?
+        // Enhanced query untuk data riwayat dengan format yang sama seperti di riwayat absensi
+        $combined_data = $this->getCombinedDataForDashboard($user_id, $bulan, $tahun);
+        $formatted_data = $this->formatCombinedDataForDashboard($combined_data);
 
-            UNION ALL
-
-            SELECT 
-                awal_izin as tanggal, 
-                NULL as jam_masuk, 
-                NULL as jam_pulang, 
-                NULL as lokasi_masuk, 
-                NULL as lokasi_pulang,
-                'Izin' as status, 
-                alasan_izin as keterangan
-            FROM izin
-            WHERE user_id = ? 
-            AND MONTH(awal_izin) = ? 
-            AND YEAR(awal_izin) = ?
-
-            UNION ALL
-
-            SELECT 
-                awal_cuti as tanggal, 
-                NULL as jam_masuk, 
-                NULL as jam_pulang, 
-                NULL as lokasi_masuk, 
-                NULL as lokasi_pulang,
-                'Cuti' as status, 
-                alasan_cuti as keterangan
-            FROM cuti
-            WHERE user_id = ? 
-            AND MONTH(awal_cuti) = ? 
-            AND YEAR(awal_cuti) = ?
-
-            ORDER BY tanggal ASC
-        ", [$user_id, $bulan, $tahun, $user_id, $bulan, $tahun, $user_id, $bulan, $tahun]);
-
-        $data['riwayat'] = $query->result();
+        $data['riwayat'] = $formatted_data;
         $data['username'] = $username;
         $data['jabatan'] = $jabatan;
         $data['id'] = $user_id;
@@ -116,6 +61,261 @@ class User extends CI_Controller {
         $data['izin'] = $izin;
 
         $this->load->view('user/dashboard', $data);
+    }
+
+    private function getCombinedDataForDashboard($user_id, $bulan, $tahun)
+    {
+        $combined_data = array();
+        
+        // Get absensi data
+        $this->db->select('
+            "absensi" as type,
+            absensi.tanggal,
+            user.nama as nama_karyawan,
+            DATE_FORMAT(absensi.tanggal, "%d %M %Y") as tanggal_formatted,
+            DAYNAME(absensi.tanggal) as hari,
+            TIME(absensi.jam_masuk) as jam_masuk_only,
+            TIME(absensi.jam_pulang) as jam_pulang_only,
+            CASE 
+                WHEN absensi.id_lokasi_masuk = 999 THEN CONCAT("Koordinat: ", absensi.latitude_masuk, ", ", absensi.longitude_masuk)
+                ELSE lokasi_masuk.nama_lokasi 
+            END as nama_lokasi_masuk,
+            CASE 
+                WHEN absensi.id_lokasi_pulang = 999 THEN CONCAT("Koordinat: ", absensi.latitude_pulang, ", ", absensi.longitude_pulang)
+                ELSE lokasi_pulang.nama_lokasi 
+            END as nama_lokasi_pulang,
+            absensi.foto_masuk,
+            absensi.foto_pulang,
+            absensi.latitude_masuk,
+            absensi.longitude_masuk,
+            absensi.latitude_pulang,
+            absensi.longitude_pulang,
+            absensi.keterangan_masuk,
+            absensi.keterangan_pulang,
+            absensi.durasi_kerja,
+            absensi.id_lokasi_masuk,
+            absensi.id_lokasi_pulang,
+            "" as alasan,
+            "" as awal_periode,
+            "" as akhir_periode,
+            "" as foto_dokumen
+        ', FALSE);
+        $this->db->from('absensi');
+        $this->db->join('user', 'user.id = absensi.user_id', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk AND absensi.id_lokasi_masuk != 999', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang AND absensi.id_lokasi_pulang != 999', 'left');
+        $this->db->where('absensi.user_id', $user_id);
+        $this->db->where('MONTH(absensi.tanggal)', $bulan);
+        $this->db->where('YEAR(absensi.tanggal)', $tahun);
+        
+        $absensi_query = $this->db->get();
+        if ($absensi_query) {
+            $combined_data = array_merge($combined_data, $absensi_query->result());
+        }
+        
+        // Get cuti data
+        $this->db->select('
+            "cuti" as type,
+            cuti.awal_cuti as tanggal,
+            user.nama as nama_karyawan,
+            DATE_FORMAT(cuti.awal_cuti, "%d %M %Y") as tanggal_formatted,
+            DAYNAME(cuti.awal_cuti) as hari,
+            "" as jam_masuk_only,
+            "" as jam_pulang_only,
+            "" as nama_lokasi_masuk,
+            "" as nama_lokasi_pulang,
+            "" as foto_masuk,
+            "" as foto_pulang,
+            "" as latitude_masuk,
+            "" as longitude_masuk,
+            "" as latitude_pulang,
+            "" as longitude_pulang,
+            "" as keterangan_masuk,
+            "" as keterangan_pulang,
+            "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
+            cuti.alasan_cuti as alasan,
+            cuti.awal_cuti as awal_periode,
+            cuti.akhir_cuti as akhir_periode,
+            "" as foto_dokumen
+        ', FALSE);
+        $this->db->from('cuti');
+        $this->db->join('user', 'user.id = cuti.user_id', 'left');
+        $this->db->where('cuti.user_id', $user_id);
+        $this->db->where('MONTH(cuti.awal_cuti)', $bulan);
+        $this->db->where('YEAR(cuti.awal_cuti)', $tahun);
+        
+        $cuti_query = $this->db->get();
+        if ($cuti_query) {
+            $combined_data = array_merge($combined_data, $cuti_query->result());
+        }
+        
+        // Get izin data
+        $this->db->select('
+            "izin" as type,
+            izin.awal_izin as tanggal,
+            user.nama as nama_karyawan,
+            DATE_FORMAT(izin.awal_izin, "%d %M %Y") as tanggal_formatted,
+            DAYNAME(izin.awal_izin) as hari,
+            "" as jam_masuk_only,
+            "" as jam_pulang_only,
+            "" as nama_lokasi_masuk,
+            "" as nama_lokasi_pulang,
+            "" as foto_masuk,
+            "" as foto_pulang,
+            "" as latitude_masuk,
+            "" as longitude_masuk,
+            "" as latitude_pulang,
+            "" as longitude_pulang,
+            "" as keterangan_masuk,
+            "" as keterangan_pulang,
+            "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
+            izin.alasan_izin as alasan,
+            izin.awal_izin as awal_periode,
+            izin.akhir_izin as akhir_periode,
+            izin.foto_izin as foto_dokumen
+        ', FALSE);
+        $this->db->from('izin');
+        $this->db->join('user', 'user.id = izin.user_id', 'left');
+        $this->db->where('izin.user_id', $user_id);
+        $this->db->where('MONTH(izin.awal_izin)', $bulan);
+        $this->db->where('YEAR(izin.awal_izin)', $tahun);
+        
+        $izin_query = $this->db->get();
+        if ($izin_query) {
+            $combined_data = array_merge($combined_data, $izin_query->result());
+        }
+        
+        // Sort by date (descending)
+        usort($combined_data, function($a, $b) {
+            return strtotime($b->tanggal) - strtotime($a->tanggal);
+        });
+        
+        return $combined_data;
+    }
+
+    private function formatCombinedDataForDashboard($combined_data)
+    {
+        $formatted_data = array();
+        
+        foreach ($combined_data as $record) {
+            $formatted_record = array(
+                'type' => $record->type,
+                'tanggal' => $record->tanggal,
+                'tanggal_formatted' => $record->tanggal_formatted,
+                'hari' => $this->getIndonesianDay($record->hari),
+                'nama_karyawan' => $record->nama_karyawan,
+            );
+            
+            if ($record->type === 'absensi') {
+                $status = 'Tidak Absen';
+                if ($record->jam_masuk_only && $record->jam_pulang_only) {
+                    $status = 'Masuk';
+                } elseif ($record->jam_masuk_only && !$record->jam_pulang_only) {
+                    $status = 'Masuk (Belum Pulang)';
+                }
+                
+                $keterangan_parts = array();
+                if (!empty($record->keterangan_masuk)) {
+                    $keterangan_parts[] = 'Masuk: ' . $record->keterangan_masuk;
+                }
+                if (!empty($record->keterangan_pulang)) {
+                    $keterangan_parts[] = 'Pulang: ' . $record->keterangan_pulang;
+                }
+                if (!empty($record->durasi_kerja)) {
+                    $keterangan_parts[] = 'Durasi: ' . $record->durasi_kerja . ' jam';
+                }
+                
+                // Format lokasi masuk dengan koordinat jika id_lokasi = 999
+                $lokasi_masuk = '';
+                if (!empty($record->nama_lokasi_masuk)) {
+                    $lokasi_masuk = $record->nama_lokasi_masuk;
+                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                    if ($record->id_lokasi_masuk != 999 && !empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
+                        $lokasi_masuk .= ' (' . $record->latitude_masuk . ', ' . $record->longitude_masuk . ')';
+                    }
+                }
+                
+                // Format lokasi pulang dengan koordinat jika id_lokasi = 999
+                $lokasi_pulang = '';
+                if (!empty($record->nama_lokasi_pulang)) {
+                    $lokasi_pulang = $record->nama_lokasi_pulang;
+                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                    if ($record->id_lokasi_pulang != 999 && !empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
+                        $lokasi_pulang .= ' (' . $record->latitude_pulang . ', ' . $record->longitude_pulang . ')';
+                    }
+                }
+                
+                $formatted_record = array_merge($formatted_record, array(
+                    'jam_masuk' => $record->jam_masuk_only ? date('H:i', strtotime($record->jam_masuk_only)) : null,
+                    'jam_pulang' => $record->jam_pulang_only ? date('H:i', strtotime($record->jam_pulang_only)) : null,
+                    'lokasi_masuk' => $lokasi_masuk ?: null,
+                    'lokasi_pulang' => $lokasi_pulang ?: null,
+                    'status' => $status,
+                    'keterangan' => !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '',
+                    'foto_masuk' => $record->foto_masuk ? $record->foto_masuk : null,
+                    'foto_pulang' => $record->foto_pulang ? $record->foto_pulang : null,
+                    'alasan' => null,
+                    'periode' => null,
+                    'foto_dokumen' => null
+                ));
+                
+            } elseif ($record->type === 'cuti') {
+                $periode = '';
+                if ($record->awal_periode && $record->akhir_periode) {
+                    if ($record->awal_periode === $record->akhir_periode) {
+                        $periode = date('d M Y', strtotime($record->awal_periode));
+                    } else {
+                        $periode = date('d M Y', strtotime($record->awal_periode)) . ' - ' . date('d M Y', strtotime($record->akhir_periode));
+                    }
+                }
+                
+                $formatted_record = array_merge($formatted_record, array(
+                    'jam_masuk' => null,
+                    'jam_pulang' => null,
+                    'lokasi_masuk' => null,
+                    'lokasi_pulang' => null,
+                    'status' => 'Cuti',
+                    'keterangan' => null,
+                    'foto_masuk' => null,
+                    'foto_pulang' => null,
+                    'alasan' => $record->alasan,
+                    'periode' => $periode,
+                    'foto_dokumen' => null
+                ));
+                
+            } elseif ($record->type === 'izin') {
+                $periode = '';
+                if ($record->awal_periode && $record->akhir_periode) {
+                    if ($record->awal_periode === $record->akhir_periode) {
+                        $periode = date('d M Y', strtotime($record->awal_periode));
+                    } else {
+                        $periode = date('d M Y', strtotime($record->awal_periode)) . ' - ' . date('d M Y', strtotime($record->akhir_periode));
+                    }
+                }
+                
+                $formatted_record = array_merge($formatted_record, array(
+                    'jam_masuk' => null,
+                    'jam_pulang' => null,
+                    'lokasi_masuk' => null,
+                    'lokasi_pulang' => null,
+                    'status' => 'Izin',
+                    'keterangan' => null,
+                    'foto_masuk' => null,
+                    'foto_pulang' => null,
+                    'alasan' => $record->alasan,
+                    'periode' => $periode,
+                    'foto_dokumen' => $record->foto_dokumen ? $record->foto_dokumen : null
+                ));
+            }
+            
+            $formatted_data[] = $formatted_record;
+        }
+        
+        return $formatted_data;
     }
 
     public function absen(){
@@ -789,8 +989,14 @@ class User extends CI_Controller {
             DAYNAME(absensi.tanggal) as hari,
             TIME(absensi.jam_masuk) as jam_masuk_only,
             TIME(absensi.jam_pulang) as jam_pulang_only,
-            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
-            lokasi_pulang.nama_lokasi as nama_lokasi_pulang,
+            CASE 
+                WHEN absensi.id_lokasi_masuk = 999 THEN CONCAT("Koordinat: ", absensi.latitude_masuk, ", ", absensi.longitude_masuk)
+                ELSE lokasi_masuk.nama_lokasi 
+            END as nama_lokasi_masuk,
+            CASE 
+                WHEN absensi.id_lokasi_pulang = 999 THEN CONCAT("Koordinat: ", absensi.latitude_pulang, ", ", absensi.longitude_pulang)
+                ELSE lokasi_pulang.nama_lokasi 
+            END as nama_lokasi_pulang,
             absensi.foto_masuk,
             absensi.foto_pulang,
             absensi.latitude_masuk,
@@ -800,6 +1006,8 @@ class User extends CI_Controller {
             absensi.keterangan_masuk,
             absensi.keterangan_pulang,
             absensi.durasi_kerja,
+            absensi.id_lokasi_masuk,
+            absensi.id_lokasi_pulang,
             "" as alasan,
             "" as awal_periode,
             "" as akhir_periode,
@@ -807,8 +1015,8 @@ class User extends CI_Controller {
         ', FALSE);
         $this->db->from('absensi');
         $this->db->join('user', 'user.id = absensi.user_id', 'left');
-        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
-        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk AND absensi.id_lokasi_masuk != 999', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang AND absensi.id_lokasi_pulang != 999', 'left');
         $this->db->where('absensi.user_id', $employee_id);
         $this->db->where('absensi.tanggal >=', $start_date);
         $this->db->where('absensi.tanggal <=', $end_date);
@@ -838,6 +1046,8 @@ class User extends CI_Controller {
             "" as keterangan_masuk,
             "" as keterangan_pulang,
             "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
             cuti.alasan_cuti as alasan,
             cuti.awal_cuti as awal_periode,
             cuti.akhir_cuti as akhir_periode,
@@ -874,6 +1084,8 @@ class User extends CI_Controller {
             "" as keterangan_masuk,
             "" as keterangan_pulang,
             "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
             izin.alasan_izin as alasan,
             izin.awal_izin as awal_periode,
             izin.akhir_izin as akhir_periode,
@@ -911,8 +1123,14 @@ class User extends CI_Controller {
             DAYNAME(absensi.tanggal) as hari,
             TIME(absensi.jam_masuk) as jam_masuk_only,
             TIME(absensi.jam_pulang) as jam_pulang_only,
-            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
-            lokasi_pulang.nama_lokasi as nama_lokasi_pulang,
+            CASE 
+                WHEN absensi.id_lokasi_masuk = 999 THEN CONCAT("Koordinat: ", absensi.latitude_masuk, ", ", absensi.longitude_masuk)
+                ELSE lokasi_masuk.nama_lokasi 
+            END as nama_lokasi_masuk,
+            CASE 
+                WHEN absensi.id_lokasi_pulang = 999 THEN CONCAT("Koordinat: ", absensi.latitude_pulang, ", ", absensi.longitude_pulang)
+                ELSE lokasi_pulang.nama_lokasi 
+            END as nama_lokasi_pulang,
             absensi.foto_masuk,
             absensi.foto_pulang,
             absensi.latitude_masuk,
@@ -922,6 +1140,8 @@ class User extends CI_Controller {
             absensi.keterangan_masuk,
             absensi.keterangan_pulang,
             absensi.durasi_kerja,
+            absensi.id_lokasi_masuk,
+            absensi.id_lokasi_pulang,
             "" as alasan,
             "" as awal_periode,
             "" as akhir_periode,
@@ -929,8 +1149,8 @@ class User extends CI_Controller {
         ', FALSE);
         $this->db->from('absensi');
         $this->db->join('user', 'user.id = absensi.user_id', 'left');
-        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
-        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk AND absensi.id_lokasi_masuk != 999', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang AND absensi.id_lokasi_pulang != 999', 'left');
         $this->db->where('user.lokasi_id', $area_id);
         $this->db->where('absensi.tanggal >=', $start_date);
         $this->db->where('absensi.tanggal <=', $end_date);
@@ -960,6 +1180,8 @@ class User extends CI_Controller {
             "" as keterangan_masuk,
             "" as keterangan_pulang,
             "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
             cuti.alasan_cuti as alasan,
             cuti.awal_cuti as awal_periode,
             cuti.akhir_cuti as akhir_periode,
@@ -996,6 +1218,8 @@ class User extends CI_Controller {
             "" as keterangan_masuk,
             "" as keterangan_pulang,
             "" as durasi_kerja,
+            "" as id_lokasi_masuk,
+            "" as id_lokasi_pulang,
             izin.alasan_izin as alasan,
             izin.awal_izin as awal_periode,
             izin.akhir_izin as akhir_periode,
@@ -1056,18 +1280,22 @@ class User extends CI_Controller {
                     $keterangan_parts[] = 'Durasi: ' . $record->durasi_kerja . ' jam';
                 }
                 
+                // Format lokasi masuk dengan koordinat jika id_lokasi = 999
                 $lokasi_masuk = '';
                 if (!empty($record->nama_lokasi_masuk)) {
                     $lokasi_masuk = $record->nama_lokasi_masuk;
-                    if (!empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
+                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                    if ($record->id_lokasi_masuk != 999 && !empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
                         $lokasi_masuk .= ' (' . $record->latitude_masuk . ', ' . $record->longitude_masuk . ')';
                     }
                 }
                 
+                // Format lokasi pulang dengan koordinat jika id_lokasi = 999
                 $lokasi_pulang = '';
                 if (!empty($record->nama_lokasi_pulang)) {
                     $lokasi_pulang = $record->nama_lokasi_pulang;
-                    if (!empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
+                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                    if ($record->id_lokasi_pulang != 999 && !empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
                         $lokasi_pulang .= ' (' . $record->latitude_pulang . ', ' . $record->longitude_pulang . ')';
                     }
                 }
@@ -1194,13 +1422,19 @@ class User extends CI_Controller {
             DAYNAME(absensi.tanggal) as hari,
             TIME(absensi.jam_masuk) as jam_masuk_only,
             TIME(absensi.jam_pulang) as jam_pulang_only,
-            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
-            lokasi_pulang.nama_lokasi as nama_lokasi_pulang
+            CASE 
+                WHEN absensi.id_lokasi_masuk = 999 THEN CONCAT("Koordinat: ", absensi.latitude_masuk, ", ", absensi.longitude_masuk)
+                ELSE lokasi_masuk.nama_lokasi 
+            END as nama_lokasi_masuk,
+            CASE 
+                WHEN absensi.id_lokasi_pulang = 999 THEN CONCAT("Koordinat: ", absensi.latitude_pulang, ", ", absensi.longitude_pulang)
+                ELSE lokasi_pulang.nama_lokasi 
+            END as nama_lokasi_pulang
         ');
         $this->db->from('absensi');
         $this->db->join('user', 'user.id = absensi.user_id', 'left');
-        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
-        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk AND absensi.id_lokasi_masuk != 999', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang AND absensi.id_lokasi_pulang != 999', 'left');
         $this->db->where('absensi.user_id', $employee_id);
         $this->db->where('absensi.tanggal >=', $start_date);
         $this->db->where('absensi.tanggal <=', $end_date);
@@ -1210,6 +1444,7 @@ class User extends CI_Controller {
         return $query ? $query->result() : array();
     }
 
+    // Function: getAbsensiByArea - Modified
     private function getAbsensiByArea($area_id, $start_date, $end_date)
     {
         $this->db->select('
@@ -1219,13 +1454,19 @@ class User extends CI_Controller {
             DAYNAME(absensi.tanggal) as hari,
             TIME(absensi.jam_masuk) as jam_masuk_only,
             TIME(absensi.jam_pulang) as jam_pulang_only,
-            lokasi_masuk.nama_lokasi as nama_lokasi_masuk,
-            lokasi_pulang.nama_lokasi as nama_lokasi_pulang
+            CASE 
+                WHEN absensi.id_lokasi_masuk = 999 THEN CONCAT("Koordinat: ", absensi.latitude_masuk, ", ", absensi.longitude_masuk)
+                ELSE lokasi_masuk.nama_lokasi 
+            END as nama_lokasi_masuk,
+            CASE 
+                WHEN absensi.id_lokasi_pulang = 999 THEN CONCAT("Koordinat: ", absensi.latitude_pulang, ", ", absensi.longitude_pulang)
+                ELSE lokasi_pulang.nama_lokasi 
+            END as nama_lokasi_pulang
         ');
         $this->db->from('absensi');
         $this->db->join('user', 'user.id = absensi.user_id', 'left');
-        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk', 'left');
-        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang', 'left');
+        $this->db->join('lokasi as lokasi_masuk', 'lokasi_masuk.id = absensi.id_lokasi_masuk AND absensi.id_lokasi_masuk != 999', 'left');
+        $this->db->join('lokasi as lokasi_pulang', 'lokasi_pulang.id = absensi.id_lokasi_pulang AND absensi.id_lokasi_pulang != 999', 'left');
         $this->db->where('user.lokasi_id', $area_id);
         $this->db->where('absensi.tanggal >=', $start_date);
         $this->db->where('absensi.tanggal <=', $end_date);
@@ -1236,6 +1477,7 @@ class User extends CI_Controller {
         return $query ? $query->result() : array();
     }
 
+    // Function: formatAbsensiData - Modified
     private function formatAbsensiData($absensi_data)
     {
         $formatted_data = array();
@@ -1261,18 +1503,22 @@ class User extends CI_Controller {
             
             $keterangan = !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '';
 
+            // Format lokasi masuk
             $lokasi_masuk = '';
             if (!empty($absensi->nama_lokasi_masuk)) {
                 $lokasi_masuk = $absensi->nama_lokasi_masuk;
-                if (!empty($absensi->latitude_masuk) && !empty($absensi->longitude_masuk)) {
+                // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                if ($absensi->id_lokasi_masuk != 999 && !empty($absensi->latitude_masuk) && !empty($absensi->longitude_masuk)) {
                     $lokasi_masuk .= ' (' . $absensi->latitude_masuk . ', ' . $absensi->longitude_masuk . ')';
                 }
             }
             
+            // Format lokasi pulang
             $lokasi_pulang = '';
             if (!empty($absensi->nama_lokasi_pulang)) {
                 $lokasi_pulang = $absensi->nama_lokasi_pulang;
-                if (!empty($absensi->latitude_pulang) && !empty($absensi->longitude_pulang)) {
+                // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
+                if ($absensi->id_lokasi_pulang != 999 && !empty($absensi->latitude_pulang) && !empty($absensi->longitude_pulang)) {
                     $lokasi_pulang .= ' (' . $absensi->latitude_pulang . ', ' . $absensi->longitude_pulang . ')';
                 }
             }
@@ -1301,8 +1547,6 @@ class User extends CI_Controller {
         
         return $formatted_data;
     }
-
-
 
     private function validateDate($date, $format = 'Y-m-d') {
         $d = DateTime::createFromFormat($format, $date);
