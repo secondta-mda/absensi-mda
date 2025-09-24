@@ -360,7 +360,7 @@ class User extends CI_Controller {
 
         $id_lokasi = $this->get_nearest_location($latitude, $longitude);
 
-        if ($jabatan === 'KARYAWAN AREA') {
+        if (in_array($jabatan, ['KARYAWAN AREA', 'KOORDINATOR AREA'])) {
             if (empty($latitude) || empty($longitude)) {
                 echo json_encode(['status' => 'error', 'message' => 'Lokasi tidak terkirim']); 
                 exit;
@@ -376,7 +376,10 @@ class User extends CI_Controller {
 
             $distance = $this->calculate_distance($latitude, $longitude, $lok_lat, $lok_lon);
             if ($distance > 1000) {
-                echo json_encode(['status' => 'error','message' => 'Anda di luar lokasi absensi. Jarak: '.round($distance).' m']); 
+                echo json_encode([
+                    'status' => 'error',
+                    'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
+                ]); 
                 exit;
             }
         }
@@ -397,12 +400,13 @@ class User extends CI_Controller {
             }
 
             if (!$absensi_today) {
+                // Absen masuk - keterangan_masuk otomatis "Tepat waktu"
                 $data_absensi = [
                     'user_id' => $user_id,
                     'tanggal' => $today,
                     'jam_masuk' => $current_time,
                     'foto_masuk' => $cloudinary_url,
-                    'keterangan_masuk' => 'Tepat waktu',
+                    'keterangan_masuk' => 'Tepat waktu', // Otomatis "Tepat waktu"
                     'created_at' => date('Y-m-d H:i:s'),
                     'latitude_masuk' => $latitude,
                     'longitude_masuk' => $longitude,
@@ -422,6 +426,7 @@ class User extends CI_Controller {
                 }
 
             } elseif ($absensi_today->jam_pulang == null) {
+                // Absen pulang
                 $jam_masuk = strtotime($absensi_today->jam_masuk);
                 $jam_pulang = strtotime($current_time);
                 $durasi_kerja = ($jam_pulang - $jam_masuk) / 3600;
