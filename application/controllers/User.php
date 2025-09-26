@@ -360,7 +360,7 @@ class User extends CI_Controller {
 
         $id_lokasi = $this->get_nearest_location($latitude, $longitude);
 
-        if (in_array($jabatan, ['KARYAWAN AREA', 'KOORDINATOR AREA'])) {
+        if ($jabatan === 'KARYAWAN AREA') {
             if (empty($latitude) || empty($longitude)) {
                 echo json_encode(['status' => 'error', 'message' => 'Lokasi tidak terkirim']); 
                 exit;

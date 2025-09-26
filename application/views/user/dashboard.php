@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dashboard Cuti</title>
+    <title>Dashboard</title>
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.0/css/all.min.css"
@@ -166,9 +166,9 @@
             <h2 class="text-2xl md:text-3xl font-bold mb-8 text-gray-800 border-b pb-2">Dashboard</h2>
 
             <?php 
-    $role = $this->session->userdata('role');
-    $gridClass = ($role === 'admin') ? 'grid-cols-4' : 'grid-cols-3';
-?>
+                $role = $this->session->userdata('role');
+                $gridClass = ($role === 'admin') ? 'grid-cols-4' : 'grid-cols-3';
+            ?>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:<?php echo $gridClass; ?> gap-4 md:gap-6 w-full">
                 <a href="<?php echo base_url('user/absen'); ?>"
