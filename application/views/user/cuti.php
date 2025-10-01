@@ -1,3 +1,4 @@
+<!-- JANGAN LAH DI BUKA BUKA BANGGG -->
 <!DOCTYPE html>
 <html lang="id">
 

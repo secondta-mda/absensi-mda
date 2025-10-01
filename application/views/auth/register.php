@@ -1,3 +1,4 @@
+<!-- JANGAN LAH DI BUKA BUKA BANGGG -->
 <!DOCTYPE html>
 <html lang="id">
 
@@ -53,14 +54,13 @@
         <div class="flex-1">
             <span class="font-bold">Perhatian!</span>
             <br>
-            Halaman register akan <b>ditutup</b> pada <b>Selasa, 30 September 2025</b>.
+            Halaman register akan <b>ditutup</b> pada <b>Minggu, 5 Oktober 2025</b>.
         </div>
         <button onclick="document.getElementById('notif-register').style.display='none';"
             class="ml-4 text-white hover:text-gray-200 focus:outline-none">
             <i class="fa-solid fa-xmark text-xl"></i>
         </button>
     </div>
-
 
     <div
         class="w-full max-w-7xl bg-white rounded-3xl shadow-2xl border border-gray-200 flex flex-col md:flex-row overflow-hidden">

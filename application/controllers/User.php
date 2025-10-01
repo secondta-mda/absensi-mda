@@ -361,28 +361,34 @@ class User extends CI_Controller {
         $id_lokasi = $this->get_nearest_location($latitude, $longitude);
 
         if ($jabatan === 'KARYAWAN AREA') {
-            if (empty($latitude) || empty($longitude)) {
-                echo json_encode(['status' => 'error', 'message' => 'Lokasi tidak terkirim']); 
-                exit;
-            }
+            $lokasi_id = $this->session->userdata('lokasi_id');
 
-            $lok_lat = $this->session->userdata('lokasi_lat');
-            $lok_lon = $this->session->userdata('lokasi_lng');
+            // jika lokasi_id 23, boleh absen di mana saja
+            if ($lokasi_id != 23) {
+                if (empty($latitude) || empty($longitude)) {
+                    echo json_encode(['status' => 'error', 'message' => 'Lokasi tidak terkirim']); 
+                    exit;
+                }
 
-            if (empty($lok_lat) || empty($lok_lon)) {
-                echo json_encode(['status' => 'error', 'message' => 'Lokasi user kosong']); 
-                exit;
-            }
+                $lok_lat = $this->session->userdata('lokasi_lat');
+                $lok_lon = $this->session->userdata('lokasi_lng');
 
-            $distance = $this->calculate_distance($latitude, $longitude, $lok_lat, $lok_lon);
-            if ($distance > 1000) {
-                echo json_encode([
-                    'status' => 'error',
-                    'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
-                ]); 
-                exit;
+                if (empty($lok_lat) || empty($lok_lon)) {
+                    echo json_encode(['status' => 'error', 'message' => 'Lokasi user kosong']); 
+                    exit;
+                }
+
+                $distance = $this->calculate_distance($latitude, $longitude, $lok_lat, $lok_lon);
+                if ($distance > 1000) {
+                    echo json_encode([
+                        'status' => 'error',
+                        'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
+                    ]); 
+                    exit;
+                }
             }
         }
+
 
         try {
             $absensi_today = $this->Absensi_model->get_absensi_today($user_id, $today);
