@@ -79,8 +79,32 @@
         <main class="flex-1 p-6 md:ml-64 mb-20 md:mb-0">
             <h2 class="text-3xl font-bold mb-8 text-gray-800 border-b pb-2">Absensi</h2>
 
+            <!-- GPS Info Panel -->
+            <div id="gpsInfo" class="hidden bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <i class="fas fa-satellite-dish text-blue-600"></i>
+                        <span class="font-semibold ml-2">Status GPS:</span>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-blue-600 font-bold">
+                            Mencari sinyal...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div id="statusAbsensi" class="bg-white rounded-2xl shadow-lg p-6 border border-gray-200">
                 <h3 class="text-lg font-semibold mb-2">Status Absensi Hari Ini</h3>
+
+                <?php if (isset($is_continuing_yesterday) && $is_continuing_yesterday): ?>
+                <div class="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                    <i class="fas fa-moon mr-1"></i>
+                    Anda sedang melanjutkan shift dari tanggal
+                    <?php echo date('d M Y', strtotime($absensi_today->tanggal)); ?>
+                </div>
+                <?php endif; ?>
+
                 <div class="block md:flex gap-4">
                     <div id="statusMasuk"
                         class="flex items-center gap-2 <?php echo ($absensi_today && $absensi_today->jam_masuk) ? 'text-green-600' : 'text-gray-400'; ?>">
@@ -145,6 +169,12 @@
                         </button>
                         <?php endif; ?>
                     </div>
+
+                    <?php if (!($absensi_today && $absensi_today->jam_masuk && $absensi_today->jam_pulang)): ?>
+                    <button onclick="showGPSTips()" class="mt-3 text-blue-600 text-sm hover:underline">
+                        <i class="fas fa-info-circle"></i> Tips Meningkatkan Akurasi GPS
+                    </button>
+                    <?php endif; ?>
                 </div>
             </div>
 
@@ -240,7 +270,7 @@
 
             <div id="uploadOverlay"
                 class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                <div class="bg-white p-6 rounded-lg shadow-xl text-center">
+                <div class="bg-white p-6 rounded-lg shadow-xl text-center max-w-md">
                     <p class="text-lg font-semibold">Mengupload gambar...</p>
                     <div class="mt-4 w-full bg-gray-200 rounded-full h-2.5">
                         <div class="bg-blue-600 h-2.5 rounded-full animate-pulse"></div>
@@ -322,8 +352,6 @@
                 cancelButtonText: 'Batal'
             }).then((result) => {
                 if (result.isConfirmed) {
-                    sessionStorage.clear();
-                    localStorage.clear();
                     window.location.href = "<?php echo base_url('auth/logout'); ?>";
                 }
             });
@@ -358,15 +386,157 @@
     const cameraLoadingDiv = document.getElementById('cameraLoading');
 
     let stream = null;
+    let gpsWatchId = null;
+
+    // ========== FUNGSI GPS AKURASI TINGGI ==========
+
+    async function getHighAccuracyLocation() {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) {
+                reject(new Error('Perangkat tidak mendukung geolokasi.'));
+                return;
+            }
+
+            const options = {
+                enableHighAccuracy: true,
+                timeout: 15000,
+                maximumAge: 0
+            };
+
+            let bestPosition = null;
+            let attempts = 0;
+            const maxAttempts = 3;
+
+            const tryGetPosition = () => {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        attempts++;
+
+                        if (!bestPosition || position.coords.accuracy < bestPosition.coords
+                            .accuracy) {
+                            bestPosition = position;
+                        }
+
+                        if (bestPosition.coords.accuracy < 20 || attempts >= maxAttempts) {
+                            resolve(bestPosition);
+                        } else {
+                            setTimeout(tryGetPosition, 1000);
+                        }
+                    },
+                    (error) => {
+                        if (attempts === 0) {
+                            reject(error);
+                        } else if (bestPosition) {
+                            resolve(bestPosition);
+                        } else {
+                            reject(error);
+                        }
+                    },
+                    options
+                );
+            };
+
+            tryGetPosition();
+        });
+    }
+
+    function watchLocation(callback) {
+        const options = {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
+        };
+
+        const watchId = navigator.geolocation.watchPosition(
+            (position) => {
+                callback({
+                    latitude: position.coords.latitude,
+                    longitude: position.coords.longitude,
+                    accuracy: position.coords.accuracy,
+                    timestamp: position.timestamp
+                });
+            },
+            (error) => {
+                console.error('Error watching position:', error);
+            },
+            options
+        );
+
+        return watchId;
+    }
+
+    function displayGPSInfo() {
+        const gpsInfoDiv = document.getElementById('gpsInfo');
+        gpsInfoDiv.classList.remove('hidden');
+
+        if (gpsWatchId) {
+            navigator.geolocation.clearWatch(gpsWatchId);
+        }
+
+        gpsWatchId = watchLocation((location) => {
+            const accuracyClass = location.accuracy < 20 ? 'text-green-600' :
+                location.accuracy < 50 ? 'text-yellow-600' : 'text-red-600';
+
+            const statusText = location.accuracy < 20 ? 'Sangat Baik ✓' :
+                location.accuracy < 50 ? 'Baik' : 'Kurang Baik';
+
+            gpsInfoDiv.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div>
+                        <i class="fas fa-satellite-dish ${accuracyClass}"></i>
+                        <span class="font-semibold ml-2">Status GPS:</span>
+                    </div>
+                    <div class="text-right">
+                        <div class="${accuracyClass} font-bold">
+                            Akurasi: ${Math.round(location.accuracy)}m
+                        </div>
+                        <div class="text-xs text-gray-500">
+                            ${statusText}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    function showGPSTips() {
+        Swal.fire({
+            title: 'Tips Meningkatkan Akurasi GPS',
+            html: `
+                <div class="text-left space-y-3">
+                    <p class="flex items-start gap-2">
+                        <i class="fas fa-check text-green-500 mt-1"></i>
+                        <span>Pastikan <b>GPS/Lokasi aktif</b> di perangkat Anda</span>
+                    </p>
+                    <p class="flex items-start gap-2">
+                        <i class="fas fa-check text-green-500 mt-1"></i>
+                        <span>Berada di <b>area terbuka</b>, hindari gedung tinggi</span>
+                    </p>
+                    <p class="flex items-start gap-2">
+                        <i class="fas fa-check text-green-500 mt-1"></i>
+                        <span>Pastikan <b>koneksi internet stabil</b></span>
+                    </p>
+                    <p class="flex items-start gap-2">
+                        <i class="fas fa-check text-green-500 mt-1"></i>
+                        <span><b>Tunggu 5-10 detik</b> sebelum ambil foto untuk GPS lock</span>
+                    </p>
+                    <p class="flex items-start gap-2">
+                        <i class="fas fa-star text-yellow-500 mt-1"></i>
+                        <span>Akurasi terbaik: <b>&lt; 20 meter</b></span>
+                    </p>
+                </div>
+            `,
+            icon: 'info',
+            confirmButtonText: 'Mengerti',
+            confirmButtonColor: '#3b82f6'
+        });
+    }
 
     async function startCamera() {
         try {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
-
-            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator
-                .userAgent);
 
             stream = await navigator.mediaDevices.getUserMedia({
                 video: {
@@ -393,16 +563,14 @@
         } catch (err) {
             console.error("Error mengakses kamera:", err);
             cameraLoadingDiv.innerHTML = `
-        <span class="text-red-500 font-bold">Tidak dapat mengakses kamera</span>
-        <button id="retryCamera" class="mt-2 px-4 py-2 bg-red-500 text-white rounded-md">
-          Coba Lagi
-        </button>
-      `;
+                <span class="text-red-500 font-bold">Tidak dapat mengakses kamera</span>
+                <button id="retryCamera" class="mt-2 px-4 py-2 bg-red-500 text-white rounded-md">
+                  Coba Lagi
+                </button>
+            `;
             document.getElementById("retryCamera").addEventListener("click", startCamera);
         }
     }
-
-
 
     function stopCamera() {
         if (stream) {
@@ -435,6 +603,7 @@
                 <?php echo ($absensi_today && $absensi_today->jam_masuk && $absensi_today->jam_pulang) ? 'true' : 'false'; ?>;
             if (!isComplete) {
                 startCamera();
+                displayGPSInfo();
             } else {
                 stopCamera();
                 if (document.getElementById('video')) {
@@ -485,6 +654,11 @@
 
         stopCamera();
 
+        if (gpsWatchId) {
+            navigator.geolocation.clearWatch(gpsWatchId);
+            gpsWatchId = null;
+        }
+
         const isAbsenMasuk = <?php echo (!$absensi_today || !$absensi_today->jam_masuk) ? 'true' : 'false'; ?>;
         const buttonText = isAbsenMasuk ? 'Kirim Absen Masuk' : 'Kirim Absen Pulang';
 
@@ -494,7 +668,7 @@
       `;
 
         document.getElementById('resetBtn').addEventListener('click', resetCamera);
-        document.getElementById('submitBtn').addEventListener('click', handleSubmit);
+        document.getElementById('submitBtn').addEventListener('click', handleSubmitWithAccurateGPS);
     }
 
     async function resetCamera() {
@@ -502,6 +676,7 @@
         video.classList.remove('hidden');
         cameraLoadingDiv.classList.remove('hidden');
         await startCamera();
+        displayGPSInfo();
 
         const isAbsenMasuk = <?php echo (!$absensi_today || !$absensi_today->jam_masuk) ? 'true' : 'false'; ?>;
         const buttonText = isAbsenMasuk ? 'Ambil Foto - Absen Masuk' : 'Ambil Foto - Absen Pulang';
@@ -515,21 +690,69 @@
         document.getElementById('captureBtn').addEventListener('click', captureImage);
     }
 
-    async function handleSubmit() {
+    async function handleSubmitWithAccurateGPS() {
         const uploadOverlay = document.getElementById('uploadOverlay');
         uploadOverlay.classList.remove('hidden');
 
+        const loadingDiv = uploadOverlay.querySelector('div');
+        loadingDiv.innerHTML = `
+            <p class="text-lg font-semibold">Mendapatkan lokasi akurat...</p>
+            <div class="mt-4 w-full bg-gray-200 rounded-full h-2.5">
+                <div class="bg-blue-600 h-2.5 rounded-full animate-pulse"></div>
+            </div>
+            <p class="text-sm text-gray-500 mt-2">
+                <i class="fas fa-satellite-dish animate-pulse"></i> 
+                Mohon tunggu, sedang mencari sinyal GPS terbaik
+            </p>
+        `;
+
         try {
-            const position = await new Promise((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
-                });
-            });
+            const position = await getHighAccuracyLocation();
 
             const latitude = position.coords.latitude;
             const longitude = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+
+            loadingDiv.innerHTML = `
+                <p class="text-lg font-semibold">Mengupload absensi...</p>
+                <p class="text-sm text-green-600 mt-2">
+                    <i class="fas fa-check-circle"></i> 
+                    Lokasi didapat (Akurasi: ${Math.round(accuracy)}m)
+                </p>
+                <div class="mt-4 w-full bg-gray-200 rounded-full h-2.5">
+                    <div class="bg-blue-600 h-2.5 rounded-full animate-pulse"></div>
+                </div>
+            `;
+
+            if (accuracy > 50) {
+                uploadOverlay.classList.add('hidden');
+
+                const confirm = await Swal.fire({
+                    title: 'Akurasi GPS Rendah',
+                    html: `
+                        <div class="text-center">
+                            <i class="fas fa-exclamation-triangle text-yellow-500 text-4xl mb-3"></i>
+                            <p class="mb-2">Akurasi lokasi Anda saat ini <b class="text-red-600">${Math.round(accuracy)} meter</b>.</p>
+                            <p class="text-sm text-gray-600">Untuk hasil terbaik, disarankan akurasi < 20 meter.</p>
+                            <br>
+                            <p class="font-semibold">Apakah Anda tetap ingin melanjutkan?</p>
+                        </div>
+                    `,
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonText: 'Ya, Lanjutkan',
+                    cancelButtonText: 'Coba Lagi',
+                    confirmButtonColor: '#f59e0b',
+                    cancelButtonColor: '#6b7280'
+                });
+
+                if (!confirm.isConfirmed) {
+                    resetCamera();
+                    return;
+                }
+
+                uploadOverlay.classList.remove('hidden');
+            }
 
             const imageData = canvas.toDataURL('image/jpeg', 0.8);
 
@@ -537,6 +760,8 @@
             formData.append('image_data', imageData);
             formData.append('latitude', latitude);
             formData.append('longitude', longitude);
+            formData.append('accuracy', accuracy);
+            formData.append('timestamp', position.timestamp);
 
             const response = await fetch('<?php echo base_url("user/submit_absensi"); ?>', {
                 method: 'POST',
@@ -548,9 +773,21 @@
             if (result.status === 'success') {
                 Swal.fire({
                     title: 'Berhasil!',
-                    text: result.message,
+                    html: `
+                        <div class="text-center">
+                            <i class="fas fa-check-circle text-green-500 text-5xl mb-3"></i>
+                            <p class="text-lg mb-2">${result.message}</p>
+                            <div class="bg-gray-100 rounded-lg p-3 mt-3">
+                                <p class="text-sm text-gray-600">
+                                    <i class="fas fa-map-marker-alt text-blue-500"></i> 
+                                    Akurasi GPS: <b>${Math.round(accuracy)}m</b>
+                                </p>
+                            </div>
+                        </div>
+                    `,
                     icon: 'success',
-                    confirmButtonText: 'OK'
+                    confirmButtonText: 'OK',
+                    confirmButtonColor: '#10b981'
                 }).then(() => {
                     window.location.reload();
                 });
@@ -560,11 +797,34 @@
 
         } catch (error) {
             console.error('Error:', error);
+            let errorMessage = 'Gagal mengirim absensi: ' + error.message;
+
+            if (error.code === 1) {
+                errorMessage = 'Akses lokasi ditolak. Mohon izinkan akses lokasi pada browser Anda.';
+            } else if (error.code === 2) {
+                errorMessage = 'Lokasi tidak tersedia. Pastikan GPS Anda aktif dan berada di area terbuka.';
+            } else if (error.code === 3) {
+                errorMessage =
+                    'Timeout mendapatkan lokasi. Pastikan Anda berada di area dengan sinyal GPS yang baik.';
+            }
+
             Swal.fire({
                 title: 'Error!',
-                text: 'Gagal mengirim absensi: ' + error.message,
+                html: `
+                    <div class="text-center">
+                        <i class="fas fa-times-circle text-red-500 text-4xl mb-3"></i>
+                        <p>${errorMessage}</p>
+                        <div class="mt-4 p-3 bg-blue-50 rounded-lg text-left text-sm">
+                            <p class="font-semibold mb-2">Tips:</p>
+                            <p>• Pastikan GPS aktif</p>
+                            <p>• Berada di area terbuka</p>
+                            <p>• Koneksi internet stabil</p>
+                        </div>
+                    </div>
+                `,
                 icon: 'error',
-                confirmButtonText: 'OK'
+                confirmButtonText: 'Coba Lagi',
+                confirmButtonColor: '#ef4444'
             });
             resetCamera();
         } finally {
@@ -574,6 +834,9 @@
 
     window.addEventListener('beforeunload', () => {
         stopCamera();
+        if (gpsWatchId) {
+            navigator.geolocation.clearWatch(gpsWatchId);
+        }
     });
     </script>
 </body>

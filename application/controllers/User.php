@@ -47,7 +47,6 @@ class User extends CI_Controller {
             ->where('YEAR(awal_izin)', $tahun)
             ->count_all_results('izin');
 
-        // Enhanced query untuk data riwayat dengan format yang sama seperti di riwayat absensi
         $combined_data = $this->getCombinedDataForDashboard($user_id, $bulan, $tahun);
         $formatted_data = $this->formatCombinedDataForDashboard($combined_data);
 
@@ -67,7 +66,6 @@ class User extends CI_Controller {
     {
         $combined_data = array();
         
-        // Get absensi data
         $this->db->select('
             "absensi" as type,
             absensi.tanggal,
@@ -113,7 +111,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $absensi_query->result());
         }
         
-        // Get cuti data
         $this->db->select('
             "cuti" as type,
             cuti.awal_cuti as tanggal,
@@ -151,7 +148,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $cuti_query->result());
         }
         
-        // Get izin data
         $this->db->select('
             "izin" as type,
             izin.awal_izin as tanggal,
@@ -189,7 +185,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $izin_query->result());
         }
         
-        // Sort by date (descending)
         usort($combined_data, function($a, $b) {
             return strtotime($b->tanggal) - strtotime($a->tanggal);
         });
@@ -229,21 +224,17 @@ class User extends CI_Controller {
                     $keterangan_parts[] = 'Durasi: ' . $record->durasi_kerja . ' jam';
                 }
                 
-                // Format lokasi masuk dengan koordinat jika id_lokasi = 999
                 $lokasi_masuk = '';
                 if (!empty($record->nama_lokasi_masuk)) {
                     $lokasi_masuk = $record->nama_lokasi_masuk;
-                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                     if ($record->id_lokasi_masuk != 999 && !empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
                         $lokasi_masuk .= ' (' . $record->latitude_masuk . ', ' . $record->longitude_masuk . ')';
                     }
                 }
                 
-                // Format lokasi pulang dengan koordinat jika id_lokasi = 999
                 $lokasi_pulang = '';
                 if (!empty($record->nama_lokasi_pulang)) {
                     $lokasi_pulang = $record->nama_lokasi_pulang;
-                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                     if ($record->id_lokasi_pulang != 999 && !empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
                         $lokasi_pulang .= ' (' . $record->latitude_pulang . ', ' . $record->longitude_pulang . ')';
                     }
@@ -318,17 +309,38 @@ class User extends CI_Controller {
         return $formatted_data;
     }
 
-    public function absen(){
+    public function absen()
+    {
         $user_id = $this->session->userdata('id');
         $today = date('Y-m-d');
+        $current_hour = (int)date('H');
 
         $absensi_hari_ini = $this->Absensi_model->get_absensi_today($user_id, $today);
+        
+        // **LOGIC BARU**: Cek apakah ada shift kemarin yang masih aktif (jam 00:00-08:00)
+        $absensi_aktif = $absensi_hari_ini;
+        $is_continuing_yesterday = false;
+        
+        if ($current_hour >= 0 && $current_hour < 8) {
+            $yesterday = date('Y-m-d', strtotime('-1 day'));
+            $absensi_kemarin = $this->Absensi_model->get_absensi_today($user_id, $yesterday);
+            
+            // Jika ada absensi kemarin yang masuk >= 15:00 dan belum pulang
+            if ($absensi_kemarin && !$absensi_kemarin->jam_pulang) {
+                $jam_masuk_hour = (int)date('H', strtotime($absensi_kemarin->jam_masuk));
+                if ($jam_masuk_hour >= 15) {
+                    $absensi_aktif = $absensi_kemarin;
+                    $is_continuing_yesterday = true;
+                }
+            }
+        }
         
         $data['username'] = $this->session->userdata('username');
         $data['jabatan'] = $this->session->userdata('jabatan');
         $data['id'] = $user_id;
         $data['jam_kerja'] = $this->session->userdata('jam_kerja');
-        $data['absensi_today'] = $absensi_hari_ini;
+        $data['absensi_today'] = $absensi_aktif;
+        $data['is_continuing_yesterday'] = $is_continuing_yesterday;
         
         $data['riwayat_masuk'] = $this->Absensi_model->get_riwayat_masuk($user_id, $today);
         $data['riwayat_pulang'] = $this->Absensi_model->get_riwayat_pulang($user_id, $today);
@@ -353,6 +365,7 @@ class User extends CI_Controller {
         $jabatan     = $this->session->userdata('jabatan');
         $today       = date('Y-m-d');
         $current_time = date('H:i:s');
+        $current_hour = (int)date('H');
         $jam_kerja   = $this->session->userdata('jam_kerja');
 
         $latitude  = $this->input->post('latitude');
@@ -363,7 +376,6 @@ class User extends CI_Controller {
         if ($jabatan === 'KARYAWAN AREA') {
             $lokasi_id = $this->session->userdata('lokasi_id');
 
-            // jika lokasi_id 23, boleh absen di mana saja
             if ($lokasi_id != 23) {
                 if (empty($latitude) || empty($longitude)) {
                     echo json_encode(['status' => 'error', 'message' => 'Lokasi tidak terkirim']); 
@@ -379,19 +391,48 @@ class User extends CI_Controller {
                 }
 
                 $distance = $this->calculate_distance($latitude, $longitude, $lok_lat, $lok_lon);
-                if ($distance > 1000) {
-                    echo json_encode([
-                        'status' => 'error',
-                        'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
-                    ]); 
-                    exit;
+
+                if ($lokasi_id == 29) {
+                    if (in_array($id_lokasi, [27, 28])) {
+                    } else {
+                        if ($distance > 1000) {
+                            echo json_encode([
+                                'status' => 'error',
+                                'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
+                            ]);
+                            exit;
+                        }
+                    }
+                } else {
+                    // Normal rule
+                    if ($distance > 1000) {
+                        echo json_encode([
+                            'status' => 'error',
+                            'message' => 'Anda di luar lokasi absensi. Jarak: ' . round($distance) . ' m'
+                        ]);
+                        exit;
+                    }
                 }
             }
         }
 
-
         try {
             $absensi_today = $this->Absensi_model->get_absensi_today($user_id, $today);
+            
+            $absensi_yesterday = null;
+            $is_continuing_yesterday_shift = false;
+            
+            if ($current_hour >= 0 && $current_hour < 8) {
+                $yesterday = date('Y-m-d', strtotime('-1 day'));
+                $absensi_yesterday = $this->Absensi_model->get_absensi_today($user_id, $yesterday);
+                
+                if ($absensi_yesterday && !$absensi_yesterday->jam_pulang) {
+                    $jam_masuk_hour = (int)date('H', strtotime($absensi_yesterday->jam_masuk));
+                    if ($jam_masuk_hour >= 15) {
+                        $is_continuing_yesterday_shift = true;
+                    }
+                }
+            }
 
             $image_data = $_POST['image_data'];
             $image_data = str_replace('data:image/jpeg;base64,', '', $image_data);
@@ -405,14 +446,52 @@ class User extends CI_Controller {
                 return;
             }
 
+            if ($is_continuing_yesterday_shift) {
+                $jam_masuk_timestamp = strtotime($absensi_yesterday->tanggal . ' ' . $absensi_yesterday->jam_masuk);
+                $jam_pulang_timestamp = strtotime($today . ' ' . $current_time);
+                $durasi_kerja = ($jam_pulang_timestamp - $jam_masuk_timestamp) / 3600;
+
+                $keterangan_pulang = '';
+                if ($durasi_kerja >= $jam_kerja) {
+                    $keterangan_pulang = 'Tepat waktu';
+                } else {
+                    $keterangan_pulang = 'Pulang cepat';
+                }
+
+                $data_update = [
+                    'jam_pulang' => $current_time,
+                    'foto_pulang' => $cloudinary_url,
+                    'keterangan_pulang' => $keterangan_pulang,
+                    'durasi_kerja' => round($durasi_kerja, 2),
+                    'updated_at' => date('Y-m-d H:i:s'),
+                    'latitude_pulang' => $latitude,
+                    'longitude_pulang' => $longitude,
+                    'id_lokasi_pulang' => $id_lokasi,
+                ];
+
+                $result = $this->Absensi_model->update_absensi($absensi_yesterday->id, $data_update);
+
+                if ($result) {
+                    echo json_encode([
+                        'status' => 'success', 
+                        'message' => 'Absensi pulang berhasil dicatat pada ' . $current_time . ' (shift dari ' . date('d M', strtotime($absensi_yesterday->tanggal)) . ')',
+                        'type' => 'pulang',
+                        'durasi_kerja' => round($durasi_kerja, 2) . ' jam',
+                        'is_cross_day' => true
+                    ]);
+                } else {
+                    echo json_encode(['status' => 'error', 'message' => 'Failed to update attendance']);
+                }
+                return;
+            }
+
             if (!$absensi_today) {
-                // Absen masuk - keterangan_masuk otomatis "Tepat waktu"
                 $data_absensi = [
                     'user_id' => $user_id,
                     'tanggal' => $today,
                     'jam_masuk' => $current_time,
                     'foto_masuk' => $cloudinary_url,
-                    'keterangan_masuk' => 'Tepat waktu', // Otomatis "Tepat waktu"
+                    'keterangan_masuk' => 'Tepat waktu',
                     'created_at' => date('Y-m-d H:i:s'),
                     'latitude_masuk' => $latitude,
                     'longitude_masuk' => $longitude,
@@ -431,8 +510,8 @@ class User extends CI_Controller {
                     echo json_encode(['status' => 'error', 'message' => 'Failed to save attendance']);
                 }
 
-            } elseif ($absensi_today->jam_pulang == null) {
-                // Absen pulang
+            } 
+            elseif ($absensi_today->jam_pulang == null) {
                 $jam_masuk = strtotime($absensi_today->jam_masuk);
                 $jam_pulang = strtotime($current_time);
                 $durasi_kerja = ($jam_pulang - $jam_masuk) / 3600;
@@ -723,7 +802,6 @@ class User extends CI_Controller {
     }
 
     public function ubah_password() {
-        // Validasi form
         $this->form_validation->set_rules('password_lama', 'Password Lama', 'required');
         $this->form_validation->set_rules('password_baru', 'Password Baru', 'required|min_length[6]');
         $this->form_validation->set_rules('konfirmasi_password_baru', 'Konfirmasi Password Baru', 'required|matches[password_baru]');
@@ -839,7 +917,6 @@ class User extends CI_Controller {
                 return;
             }
 
-            // Validasi dan set date range
             if ($date_range_type === 'daily') {
                 $start_date = $this->input->post('start_date');
                 $end_date = $this->input->post('end_date');
@@ -894,7 +971,6 @@ class User extends CI_Controller {
                 $end_date = date('Y-m-t', strtotime($start_date));
             }
 
-            // Query berdasarkan data type
             if ($data_type === 'per_orang') {
                 $employee_id = $this->input->post('employee_id');
                 
@@ -906,7 +982,6 @@ class User extends CI_Controller {
                     return;
                 }
 
-                // Validasi karyawan exists
                 $this->db->where('id', $employee_id);
                 $employee = $this->db->get('user')->row();
                 
@@ -931,7 +1006,6 @@ class User extends CI_Controller {
                     return;
                 }
 
-                // Validasi lokasi exists
                 $this->db->where('id', $area_id);
                 $location = $this->db->get('lokasi')->row();
                 
@@ -991,7 +1065,6 @@ class User extends CI_Controller {
     {
         $combined_data = array();
         
-        // Get absensi data
         $this->db->select('
             "absensi" as type,
             absensi.tanggal,
@@ -1037,7 +1110,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $absensi_query->result());
         }
         
-        // Get cuti data
         $this->db->select('
             "cuti" as type,
             cuti.awal_cuti as tanggal,
@@ -1075,7 +1147,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $cuti_query->result());
         }
         
-        // Get izin data
         $this->db->select('
             "izin" as type,
             izin.awal_izin as tanggal,
@@ -1113,7 +1184,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $izin_query->result());
         }
         
-        // Sort by date
         usort($combined_data, function($a, $b) {
             return strtotime($b->tanggal) - strtotime($a->tanggal);
         });
@@ -1125,7 +1195,6 @@ class User extends CI_Controller {
     {
         $combined_data = array();
         
-        // Get absensi data by area
         $this->db->select('
             "absensi" as type,
             absensi.tanggal,
@@ -1171,7 +1240,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $absensi_query->result());
         }
         
-        // Get cuti data by area
         $this->db->select('
             "cuti" as type,
             cuti.awal_cuti as tanggal,
@@ -1209,7 +1277,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $cuti_query->result());
         }
         
-        // Get izin data by area
         $this->db->select('
             "izin" as type,
             izin.awal_izin as tanggal,
@@ -1247,7 +1314,6 @@ class User extends CI_Controller {
             $combined_data = array_merge($combined_data, $izin_query->result());
         }
         
-        // Sort by date and name
         usort($combined_data, function($a, $b) {
             $dateComparison = strtotime($b->tanggal) - strtotime($a->tanggal);
             if ($dateComparison === 0) {
@@ -1291,21 +1357,17 @@ class User extends CI_Controller {
                     $keterangan_parts[] = 'Durasi: ' . $record->durasi_kerja . ' jam';
                 }
                 
-                // Format lokasi masuk dengan koordinat jika id_lokasi = 999
                 $lokasi_masuk = '';
                 if (!empty($record->nama_lokasi_masuk)) {
                     $lokasi_masuk = $record->nama_lokasi_masuk;
-                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                     if ($record->id_lokasi_masuk != 999 && !empty($record->latitude_masuk) && !empty($record->longitude_masuk)) {
                         $lokasi_masuk .= ' (' . $record->latitude_masuk . ', ' . $record->longitude_masuk . ')';
                     }
                 }
                 
-                // Format lokasi pulang dengan koordinat jika id_lokasi = 999
                 $lokasi_pulang = '';
                 if (!empty($record->nama_lokasi_pulang)) {
                     $lokasi_pulang = $record->nama_lokasi_pulang;
-                    // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                     if ($record->id_lokasi_pulang != 999 && !empty($record->latitude_pulang) && !empty($record->longitude_pulang)) {
                         $lokasi_pulang .= ' (' . $record->latitude_pulang . ', ' . $record->longitude_pulang . ')';
                     }
@@ -1398,7 +1460,6 @@ class User extends CI_Controller {
                 if ($record['status'] === 'Masuk') {
                     $present_days++;
                     
-                    // Cek keterlambatan
                     if ($record['jam_masuk'] && strtotime($record['jam_masuk']) > strtotime($standard_work_time)) {
                         $late_days++;
                     }
@@ -1455,7 +1516,6 @@ class User extends CI_Controller {
         return $query ? $query->result() : array();
     }
 
-    // Function: getAbsensiByArea - Modified
     private function getAbsensiByArea($area_id, $start_date, $end_date)
     {
         $this->db->select('
@@ -1488,7 +1548,6 @@ class User extends CI_Controller {
         return $query ? $query->result() : array();
     }
 
-    // Function: formatAbsensiData - Modified
     private function formatAbsensiData($absensi_data)
     {
         $formatted_data = array();
@@ -1514,21 +1573,17 @@ class User extends CI_Controller {
             
             $keterangan = !empty($keterangan_parts) ? implode(' | ', $keterangan_parts) : '';
 
-            // Format lokasi masuk
             $lokasi_masuk = '';
             if (!empty($absensi->nama_lokasi_masuk)) {
                 $lokasi_masuk = $absensi->nama_lokasi_masuk;
-                // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                 if ($absensi->id_lokasi_masuk != 999 && !empty($absensi->latitude_masuk) && !empty($absensi->longitude_masuk)) {
                     $lokasi_masuk .= ' (' . $absensi->latitude_masuk . ', ' . $absensi->longitude_masuk . ')';
                 }
             }
             
-            // Format lokasi pulang
             $lokasi_pulang = '';
             if (!empty($absensi->nama_lokasi_pulang)) {
                 $lokasi_pulang = $absensi->nama_lokasi_pulang;
-                // Jika bukan id_lokasi 999 dan ada koordinat, tambahkan koordinat dalam kurung
                 if ($absensi->id_lokasi_pulang != 999 && !empty($absensi->latitude_pulang) && !empty($absensi->longitude_pulang)) {
                     $lokasi_pulang .= ' (' . $absensi->latitude_pulang . ', ' . $absensi->longitude_pulang . ')';
                 }
@@ -1547,7 +1602,6 @@ class User extends CI_Controller {
                 'foto_masuk' => $absensi->foto_masuk ? $absensi->foto_masuk : null,
                 'foto_pulang' => $absensi->foto_pulang ? $absensi->foto_pulang : null,
                 'nama_karyawan' => $absensi->nama_karyawan,
-                // Data tambahan untuk debugging/report
                 'latitude_masuk' => $absensi->latitude_masuk,
                 'longitude_masuk' => $absensi->longitude_masuk,
                 'latitude_pulang' => $absensi->latitude_pulang,
@@ -1577,7 +1631,6 @@ class User extends CI_Controller {
             if ($record['status'] === 'Masuk') {
                 $present_days++;
                 
-                // Cek keterlambatan
                 if ($record['jam_masuk'] && strtotime($record['jam_masuk']) > strtotime($standard_work_time)) {
                     $late_days++;
                 }
@@ -1643,10 +1696,8 @@ class User extends CI_Controller {
             $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
             $sheet = $spreadsheet->getActiveSheet();
             
-            // Set sheet name
             $sheet->setTitle('Laporan Absensi');
             
-            // Header Information
             $sheet->setCellValue('A1', 'LAPORAN DATA ABSENSI, CUTI & IZIN');
             $sheet->mergeCells('A1:M1');
             $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(16);
@@ -1657,7 +1708,6 @@ class User extends CI_Controller {
             $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(12);
             $sheet->getStyle('A2')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
             
-            // Period Information
             $period_text = $this->formatDateRange($date_range_type, $start_date, $end_date);
             $sheet->setCellValue('A4', 'Periode: ' . $period_text);
             $sheet->mergeCells('A4:M4');
@@ -1669,7 +1719,6 @@ class User extends CI_Controller {
             $sheet->setCellValue('A6', 'Type Data: ' . ($data_type === 'per_orang' ? 'Per Karyawan' : 'Per Area'));
             $sheet->mergeCells('A6:M6');
             
-            // Summary Section
             $row = 8;
             $sheet->setCellValue('A' . $row, 'RINGKASAN DATA');
             $sheet->mergeCells('A' . $row . ':M' . $row);
@@ -1689,7 +1738,6 @@ class User extends CI_Controller {
             $sheet->setCellValue('E' . $row, 'Belum Pulang: ' . $summary['incomplete_days']);
             $sheet->setCellValue('G' . $row, 'Tingkat Kehadiran: ' . $summary['attendance_rate'] . '%');
             
-            // Table Headers
             $row += 2;
             $headers = [
                 'A' => 'No',
@@ -1711,7 +1759,6 @@ class User extends CI_Controller {
                 $sheet->setCellValue($col . $row, $header);
             }
             
-            // Style headers
             $headerRange = 'A' . $row . ':M' . $row;
             $sheet->getStyle($headerRange)->getFont()->setBold(true);
             $sheet->getStyle($headerRange)->getFill()->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
@@ -1719,7 +1766,6 @@ class User extends CI_Controller {
             $sheet->getStyle($headerRange)->getBorders()->getAllBorders()
                     ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
             
-            // Data Rows
             $dataStartRow = $row + 1;
             $no = 1;
             
@@ -1743,38 +1789,31 @@ class User extends CI_Controller {
                 $no++;
             }
             
-            // Style data rows
             $dataRange = 'A' . $dataStartRow . ':M' . $row;
             $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
                     ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
             
-            // Auto-size columns
             foreach (range('A', 'M') as $col) {
                 $sheet->getColumnDimension($col)->setAutoSize(true);
             }
             
-            // Set maximum width for location columns to prevent too wide columns
             $sheet->getColumnDimension('G')->setWidth(30);
             $sheet->getColumnDimension('I')->setWidth(30);
             $sheet->getColumnDimension('K')->setWidth(25);
             $sheet->getColumnDimension('M')->setWidth(35);
             
-            // Create export directory if not exists
             $export_dir = FCPATH . 'exports/';
             if (!is_dir($export_dir)) {
                 mkdir($export_dir, 0755, true);
             }
             
-            // Generate filename
             $date_suffix = date('Y-m-d_H-i-s');
             $filename = $filename_prefix . '_' . $date_suffix . '.xlsx';
             $filepath = $export_dir . $filename;
             
-            // Save file
             $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
             $writer->save($filepath);
             
-            // Clean up memory
             $spreadsheet->disconnectWorksheets();
             unset($spreadsheet);
             
@@ -1792,7 +1831,6 @@ class User extends CI_Controller {
             return '';
         }
         
-        // Remove coordinates from location text for cleaner Excel display
         return preg_replace('/\s*\([^)]*\)$/', '', $location_text);
     }
 
@@ -1801,7 +1839,6 @@ class User extends CI_Controller {
         try {
             $this->authorize(['admin']);
             
-            // Load PhpSpreadsheet library
             require_once APPPATH . '../vendor/autoload.php';
             
             $data_type = $this->input->post('data_type');
@@ -1816,7 +1853,6 @@ class User extends CI_Controller {
                 return;
             }
 
-            // Validasi dan set date range
             if ($date_range_type === 'daily') {
                 $start_date = $this->input->post('start_date');
                 $end_date = $this->input->post('end_date');
@@ -1856,7 +1892,6 @@ class User extends CI_Controller {
                 $end_date = date('Y-m-t', strtotime($start_date));
             }
 
-            // Query berdasarkan data type
             if ($data_type === 'per_orang') {
                 $employee_id = $this->input->post('employee_id');
                 
@@ -1871,10 +1906,8 @@ class User extends CI_Controller {
 
                 $combined_data = $this->getCombinedDataByEmployee($employee_id, $start_date, $end_date);
                 
-                // Calculate total work hours for employee
                 $total_work_hours = $this->calculateTotalWorkHours($employee_id, $start_date, $end_date);
                 
-                // Get employee name for filename
                 $this->db->where('id', $employee_id);
                 $employee = $this->db->get('user')->row();
                 $filename_prefix = 'Data_Karyawan_' . str_replace(' ', '_', $employee->nama);
@@ -1893,10 +1926,8 @@ class User extends CI_Controller {
 
                 $combined_data = $this->getCombinedDataByArea($area_id, $start_date, $end_date);
                 
-                // Calculate total work hours for area
                 $total_work_hours = $this->calculateTotalWorkHoursByArea($area_id, $start_date, $end_date);
                 
-                // Get area name for filename
                 $this->db->where('id', $area_id);
                 $location = $this->db->get('lokasi')->row();
                 $filename_prefix = 'Data_Area_' . str_replace(' ', '_', $location->nama_lokasi);
@@ -1914,10 +1945,8 @@ class User extends CI_Controller {
             $formatted_data = $this->formatCombinedData($combined_data);
             $summary = $this->generateCombinedSummary($formatted_data);
             
-            // Add total work hours to summary
             $summary['total_work_hours'] = $total_work_hours;
             
-            // Generate and stream Excel file directly
             $this->streamExcelFile($formatted_data, $summary, $start_date, $end_date, $filename_prefix, $data_type, $date_range_type);
             
         } catch (Exception $e) {
@@ -1968,7 +1997,6 @@ class User extends CI_Controller {
             $sheet = $spreadsheet->getActiveSheet();
             $sheet->setTitle('Laporan Absensi');
 
-            // ===== JUDUL UTAMA =====
             $sheet->setCellValue('A1', 'LAPORAN DATA ABSENSI, CUTI & IZIN');
             $sheet->mergeCells('A1:N1');
             $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(16);
@@ -1979,7 +2007,6 @@ class User extends CI_Controller {
             $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(12);
             $sheet->getStyle('A2')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
 
-            // ===== INFORMASI PERIODE =====
             $period_text = $this->formatDateRange($date_range_type, $start_date, $end_date);
             $sheet->setCellValue('A4', 'Periode: ' . $period_text);
             $sheet->mergeCells('A4:G4');
@@ -1993,7 +2020,6 @@ class User extends CI_Controller {
             $sheet->mergeCells('A5:N5');
             $sheet->getStyle('A5')->getFont()->setBold(true);
 
-            // ===== RINGKASAN =====
             $row = 7;
             $sheet->setCellValue('A' . $row, 'RINGKASAN DATA');
             $sheet->mergeCells('A' . $row . ':N' . $row);
@@ -2026,25 +2052,21 @@ class User extends CI_Controller {
             $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
             $row += 2;
 
-            // ===== DATA PER MINGGU =====
             $weekly_data = $this->separateDataByWeeks($data, $start_date, $end_date);
 
             foreach ($weekly_data as $week_info) {
-                // Judul minggu
                 $sheet->setCellValue('A' . $row, $week_info['title']);
                 $sheet->mergeCells('A' . $row . ':N' . $row);
                 $sheet->getStyle('A' . $row)->getFont()->setBold(true)->setSize(12);
                 $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
                 $row++;
 
-                // Ringkasan minggu
                 $sheet->setCellValue('A' . $row, 'Ringkasan Minggu: ' . count($week_info['data']) . ' data | Jam Kerja: ' . $week_info['total_hours'] . ' jam');
                 $sheet->mergeCells('A' . $row . ':N' . $row);
                 $sheet->getStyle('A' . $row)->getFont()->setItalic(true);
                 $row++;
 
                 if (!empty($week_info['data'])) {
-                    // Header tabel
                     $headers = [
                         'A' => 'No',
                         'B' => 'Type',
@@ -2071,7 +2093,6 @@ class User extends CI_Controller {
                     $sheet->getStyle($headerRange)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
                     $row++;
 
-                    // Isi data
                     $no = 1;
                     foreach ($week_info['data'] as $record) {
                         $jam_kerja_display = '';
@@ -2100,26 +2121,22 @@ class User extends CI_Controller {
                         $no++;
                     }
 
-                    // Border isi data
                     $dataRange = 'A' . ($row - count($week_info['data'])) . ':N' . ($row - 1);
                     $sheet->getStyle($dataRange)->getBorders()->getAllBorders()
                         ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
 
-                    // === Tambah background abu-abu soft untuk 1 minggu ===
                     $sheet->getStyle($dataRange)->getFill()->setFillType(
                         \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID
-                    )->getStartColor()->setARGB('FFEFEFEF'); // abu-abu soft (hex EFEFEF)
+                    )->getStartColor()->setARGB('FFEFEFEF');
 
                     $row++;
                 }
             }
 
-            // Atur lebar kolom
             foreach (range('A', 'N') as $col) {
                 $sheet->getColumnDimension($col)->setAutoSize(true);
             }
 
-            // ===== OUTPUT FILE =====
             $date_suffix = date('Y-m-d_H-i-s');
             $filename = $filename_prefix . '_' . $date_suffix . '.xlsx';
 
@@ -2154,9 +2171,8 @@ class User extends CI_Controller {
         $start_timestamp = strtotime($start_date);
         $end_timestamp = strtotime($end_date);
 
-        // Cari Senin dari minggu yang mengandung start_date
         $start_of_week = $start_timestamp;
-        while (date('N', $start_of_week) != 1) { // N = 1 untuk Senin
+        while (date('N', $start_of_week) != 1) {
             $start_of_week = strtotime('-1 day', $start_of_week);
         }
 
@@ -2164,26 +2180,20 @@ class User extends CI_Controller {
         $week_number = 1;
 
         while ($current_week_start <= $end_timestamp) {
-            // Minggu berakhir di hari Minggu (6 hari setelah Senin)
             $current_week_end = strtotime('+6 days', $current_week_start);
             
-            // Batasi dengan periode yang diminta
             $actual_start = max($current_week_start, $start_timestamp);
             $actual_end = min($current_week_end, $end_timestamp);
 
-            // Kumpulkan data untuk minggu ini
             $week_data = [];
             $total_work_hours = 0;
 
             foreach ($data as $record) {
                 $record_timestamp = strtotime($record['tanggal']);
                 
-                // Cek apakah record berada dalam rentang minggu ini
                 if ($record_timestamp >= $current_week_start && $record_timestamp <= $current_week_end) {
-                    // Urutkan data berdasarkan tanggal dan nama karyawan
                     $week_data[] = $record;
                     
-                    // Hitung jam kerja jika ada
                     if ($record['type'] === 'absensi' && !empty($record['keterangan'])) {
                         if (preg_match('/Durasi:\s*([\d.,]+)\s*jam/', $record['keterangan'], $matches)) {
                             $hours = floatval(str_replace(',', '.', $matches[1]));
@@ -2193,7 +2203,6 @@ class User extends CI_Controller {
                 }
             }
 
-            // Urutkan data dalam minggu berdasarkan tanggal kemudian nama
             usort($week_data, function($a, $b) {
                 $dateCompare = strcmp($a['tanggal'], $b['tanggal']);
                 if ($dateCompare === 0) {
@@ -2202,9 +2211,7 @@ class User extends CI_Controller {
                 return $dateCompare;
             });
 
-            // Hanya tambahkan minggu jika ada data atau jika minggu ini intersect dengan periode
             if (!empty($week_data) || ($current_week_start <= $end_timestamp && $current_week_end >= $start_timestamp)) {
-                // Format tanggal untuk judul minggu
                 $display_start = max($current_week_start, $start_timestamp);
                 $display_end = min($current_week_end, $end_timestamp);
                 
@@ -2224,11 +2231,9 @@ class User extends CI_Controller {
                 ];
             }
 
-            // Lanjut ke minggu berikutnya (Senin berikutnya)
             $current_week_start = strtotime('+7 days', $current_week_start);
             $week_number++;
             
-            // Safety break untuk menghindari infinite loop
             if ($week_number > 100) {
                 break;
             }
@@ -2237,9 +2242,6 @@ class User extends CI_Controller {
         return $weekly_data;
     }
 
-    /**
-     * Helper function untuk format tanggal Indonesia
-     */
     private function formatIndonesianDate($timestamp)
     {
         $months = [
@@ -2255,9 +2257,7 @@ class User extends CI_Controller {
         return $day . ' ' . $month . ' ' . $year;
     }
 
-    /**
-     * Helper function untuk mendapatkan info hari dalam minggu
-     */
+
     private function getWeekDaysInfo($week_start, $week_end, $period_start, $period_end)
     {
         $days = [];
@@ -2266,7 +2266,7 @@ class User extends CI_Controller {
         $day_names = ['', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
         
         for ($i = 0; $i < 7; $i++) {
-            $day_number = intval(date('N', $current_day)); // 1=Senin, 7=Minggu
+            $day_number = intval(date('N', $current_day));
             $is_in_period = ($current_day >= $period_start && $current_day <= $period_end);
             
             $days[] = [
@@ -2283,9 +2283,6 @@ class User extends CI_Controller {
         return $days;
     }
 
-    /**
-     * Fungsi tambahan untuk debugging - menampilkan struktur minggu
-     */
     private function debugWeekStructure($weekly_data)
     {
         foreach ($weekly_data as $week) {
@@ -2299,5 +2296,830 @@ class User extends CI_Controller {
             }
             echo "\n";
         }
+    }
+
+    private function formatPeriodCutOff($start_date, $end_date)
+    {
+        $start = new DateTime($start_date);
+        $end = new DateTime($end_date);
+        
+        $start_day = $start->format('d');
+        $end_day = $end->format('d');
+        $start_month = $this->getIndonesianMonth($start->format('n'));
+        $end_month = $this->getIndonesianMonth($end->format('n'));
+        
+        if ($start->format('Y-m') === $end->format('Y-m')) {
+            // Same month
+            return $start_day . ' ' . strtoupper($start_month) . ' S/D ' . $end_day . ' ' . strtoupper($end_month) . ' ' . $end->format('Y');
+        } else {
+            // Different months
+            return $start_day . ' ' . strtoupper($start_month) . ' S/D ' . $end_day . ' ' . strtoupper($end_month) . ' ' . $end->format('Y');
+        }
+    }
+
+    private function formatPeriodForRekapitulasi($start_date, $end_date)
+    {
+        $start = new DateTime($start_date);
+        $end = new DateTime($end_date);
+        
+        $start_day = $start->format('d');
+        $end_day = $end->format('d');
+        $start_month = $this->getIndonesianMonth($start->format('n'));
+        $end_month = $this->getIndonesianMonth($end->format('n'));
+        
+        return $start_day . ' ' . strtoupper($start_month) . ' s/d ' . $end_day . ' ' . strtoupper($end_month) . ' ' . $end->format('Y');
+    }
+
+    private function getIndonesianMonth($month_num)
+    {
+        $months = [
+            1 => 'Januari', 2 => 'Februari', 3 => 'Maret', 4 => 'April',
+            5 => 'Mei', 6 => 'Juni', 7 => 'Juli', 8 => 'Agustus',
+            9 => 'September', 10 => 'Oktober', 11 => 'November', 12 => 'Desember'
+        ];
+        
+        return $months[intval($month_num)] ?? '';
+    }
+
+    private function getColumnLetter($index)
+    {
+        $letter = '';
+        while ($index > 0) {
+            $index--;
+            $letter = chr(65 + ($index % 26)) . $letter;
+            $index = floor($index / 26);
+        }
+        return $letter;
+    }
+
+    private function generateDateRange($start_date, $end_date)
+    {
+        $dates = array();
+        $current = strtotime($start_date);
+        $end = strtotime($end_date);
+        
+        while ($current <= $end) {
+            $dates[] = date('Y-m-d', $current);
+            $current = strtotime('+1 day', $current);
+        }
+        
+        return $dates;
+    }
+
+    private function getDateRangesFromRecords($records, $start_field, $end_field)
+    {
+        $dates = array();
+        
+        foreach ($records as $record) {
+            $start = strtotime($record->$start_field);
+            $end = strtotime($record->$end_field);
+            
+            $current = $start;
+            while ($current <= $end) {
+                $dates[] = date('Y-m-d', $current);
+                $current = strtotime('+1 day', $current);
+            }
+        }
+        
+        return array_unique($dates);
+    }
+
+    private function getEmployeeAttendanceForPayroll($employee_id, $start_date, $end_date)
+    {
+        $this->db->select('*');
+        $this->db->from('absensi');
+        $this->db->where('user_id', $employee_id);
+        $this->db->where('tanggal >=', $start_date);
+        $this->db->where('tanggal <=', $end_date);
+        $this->db->order_by('tanggal', 'ASC');
+        
+        $query = $this->db->get();
+        return $query ? $query->result() : array();
+    }
+
+    private function getEmployeeCutiForPayroll($employee_id, $start_date, $end_date)
+    {
+        $this->db->select('*');
+        $this->db->from('cuti');
+        $this->db->where('user_id', $employee_id);
+        $this->db->where('awal_cuti <=', $end_date);
+        $this->db->where('akhir_cuti >=', $start_date);
+        
+        $query = $this->db->get();
+        return $query ? $query->result() : array();
+    }
+
+    private function getEmployeeIzinForPayroll($employee_id, $start_date, $end_date)
+    {
+        $this->db->select('*');
+        $this->db->from('izin');
+        $this->db->where('user_id', $employee_id);
+        $this->db->where('awal_izin <=', $end_date);
+        $this->db->where('akhir_izin >=', $start_date);
+        
+        $query = $this->db->get();
+        return $query ? $query->result() : array();
+    }
+
+    public function export_excel_payroll()
+    {
+        try {
+            $this->authorize(['admin']);
+            
+            require_once APPPATH . '../vendor/autoload.php';
+            
+            $data_type = $this->input->post('data_type');
+            $date_range_type = $this->input->post('date_range_type');
+            
+            if (empty($data_type) || empty($date_range_type)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Type data dan jarak waktu harus dipilih'
+                ));
+                return;
+            }
+
+            if ($date_range_type === 'daily') {
+                $start_date = $this->input->post('start_date');
+                $end_date = $this->input->post('end_date');
+                
+                if (empty($start_date) || empty($end_date)) {
+                    $this->output->set_status_header(400);
+                    echo json_encode(array(
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai dan tanggal akhir harus diisi'
+                    ));
+                    return;
+                }
+                
+                if (strtotime($start_date) > strtotime($end_date)) {
+                    $this->output->set_status_header(400);
+                    echo json_encode(array(
+                        'status' => 'error',
+                        'message' => 'Tanggal mulai tidak boleh lebih besar dari tanggal akhir'
+                    ));
+                    return;
+                }
+                
+            } elseif ($date_range_type === 'monthly') {
+                $month = $this->input->post('month');
+                $year = $this->input->post('year');
+                
+                if (empty($month) || empty($year)) {
+                    $this->output->set_status_header(400);
+                    echo json_encode(array(
+                        'status' => 'error',
+                        'message' => 'Bulan dan tahun harus diisi'
+                    ));
+                    return;
+                }
+                
+                $start_date = $year . '-' . str_pad($month, 2, '0', STR_PAD_LEFT) . '-01';
+                $end_date = date('Y-m-t', strtotime($start_date));
+            }
+
+            if ($data_type !== 'per_area') {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Export payroll hanya tersedia untuk data per area'
+                ));
+                return;
+            }
+            
+            $area_id = $this->input->post('area_id');
+            
+            if (empty($area_id)) {
+                $this->output->set_status_header(400);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'ID area tidak valid'
+                ));
+                return;
+            }
+
+            $this->db->where('id', $area_id);
+            $location = $this->db->get('lokasi')->row();
+            
+            if (!$location) {
+                $this->output->set_status_header(404);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Lokasi tidak ditemukan'
+                ));
+                return;
+            }
+
+            $employees_data = $this->getEmployeesByArea($area_id, $start_date, $end_date);
+            
+            if (empty($employees_data)) {
+                $this->output->set_status_header(404);
+                echo json_encode(array(
+                    'status' => 'error',
+                    'message' => 'Tidak ada data karyawan untuk diexport'
+                ));
+                return;
+            }
+
+            $this->streamPayrollExcelFile($employees_data, $start_date, $end_date, $location->nama_lokasi, $date_range_type);
+            
+        } catch (Exception $e) {
+            log_message('error', 'Error in export_excel_payroll: ' . $e->getMessage());
+            $this->output->set_status_header(500);
+            echo json_encode(array(
+                'status' => 'error',
+                'message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()
+            ));
+        }
+    }
+
+    private function streamPayrollExcelFile($employees_data, $start_date, $end_date, $area_name, $date_range_type)
+    {
+        try {
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+
+            // Set default font to Cambria for all sheets
+            $spreadsheet->getDefaultStyle()->getFont()->setName('Cambria');
+
+            // SHEET 1: PAYROLL
+            $this->createPayrollSheet($spreadsheet, $employees_data, $start_date, $end_date, $area_name, $date_range_type);
+
+            // SHEET 2: REKAPITULASI ABSENSI
+            $this->createRekapitulasiSheet($spreadsheet, $employees_data, $start_date, $end_date, $area_name, $date_range_type);
+
+            // Set active sheet to first sheet
+            $spreadsheet->setActiveSheetIndex(0);
+
+            $date_suffix = date('Y-m-d_H-i-s');
+            $filename = 'Payroll_' . str_replace(' ', '_', $area_name) . '_' . $date_suffix . '.xlsx';
+
+            if (ob_get_length()) ob_end_clean();
+
+            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            header('Content-Disposition: attachment; filename="' . $filename . '"');
+            header('Cache-Control: max-age=0');
+            header('Pragma: public');
+
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            $writer->save('php://output');
+
+            $spreadsheet->disconnectWorksheets();
+            unset($spreadsheet);
+            exit;
+
+        } catch (Exception $e) {
+            log_message('error', 'Error streaming payroll Excel file: ' . $e->getMessage());
+            if (!headers_sent()) {
+                header('Content-Type: application/json');
+                http_response_code(500);
+            }
+            echo json_encode(['status' => 'error', 'message' => 'Terjadi kesalahan saat membuat file: ' . $e->getMessage()]);
+            exit;
+        }
+    }
+
+    private function createPayrollSheet($spreadsheet, $employees_data, $start_date, $end_date, $area_name, $date_range_type)
+    {
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('Payroll');
+        
+        // Header - Row 1
+        $sheet->setCellValue('A1', 'DAFTAR PENGGAJIAN KARYAWAN');
+        $sheet->mergeCells('A1:N1');
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
+        $sheet->getStyle('A1')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        
+        // Row 2
+        $sheet->setCellValue('A2', 'PROJECT: ' . strtoupper($area_name));
+        $sheet->mergeCells('A2:N2');
+        $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(12);
+        $sheet->getStyle('A2')->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        
+        // Table Headers - Row 5
+        $row = 5;
+        $headers = [
+            'A' => 'No',
+            'B' => 'Nomer Rekening',
+            'C' => 'NIK',
+            'D' => 'Nama Karyawan',
+            'E' => 'Area',
+            'F' => 'Join Date',
+            'G' => 'Jabatan',
+            'H' => 'Periode Cut Off',
+            'I' => 'HK',
+            'J' => 'Gaji Pokok 2023',
+            'K' => 'Gaji bln Agt',
+            'L' => 'Insentive jabatan',
+            'M' => 'Insentive Kehadiran',
+            'N' => 'Total Penerimaan'
+        ];
+        
+        foreach ($headers as $col => $header) {
+            $sheet->setCellValue($col . $row, $header);
+            $sheet->getStyle($col . $row)->getFont()->setBold(true)->setSize(10);
+            $sheet->getStyle($col . $row)->getFill()
+                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                ->getStartColor()->setARGB('FFD3D3D3');
+            $sheet->getStyle($col . $row)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            $sheet->getStyle($col . $row)->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+            $sheet->getStyle($col . $row)->getAlignment()->setWrapText(true);
+        }
+        
+        // Set row height for header
+        $sheet->getRowDimension($row)->setRowHeight(30);
+        
+        // Data rows
+        $row = 6;
+        $no = 1;
+        $total_gaji_pokok = 0;
+        $total_gaji_bulan = 0;
+        $total_insentif_jabatan = 0;
+        $total_insentif_kehadiran = 0;
+        $total_penerimaan = 0;
+        
+        foreach ($employees_data as $emp_data) {
+            $employee = $emp_data['employee'];
+            $attendance = $emp_data['attendance'];
+            
+            // Calculate working days (HK)
+            $hk = $this->calculateWorkingDays($attendance, $start_date, $end_date);
+            
+            // Get period
+            $periode = $this->formatPeriodCutOff($start_date, $end_date);
+            
+            // Gaji pokok dari database atau default
+            $gaji_pokok = !empty($employee->gaji_pokok) ? floatval($employee->gaji_pokok) : 2300000;
+            
+            // Gaji bulan berjalan - dihitung berdasarkan HK (prorata)
+            // Asumsi: 1 bulan = 25 hari kerja standar
+            $standar_hk = 25;
+            $gaji_bulan = ($gaji_pokok / $standar_hk) * $hk;
+            
+            // Insentif jabatan dari database
+            $insentif_jabatan = !empty($employee->insentive_jabatan) ? floatval($employee->insentive_jabatan) : 0;
+            
+            // Insentif kehadiran dari database
+            $insentif_kehadiran = !empty($employee->insentive_kehadiran) ? floatval($employee->insentive_kehadiran) : 0;
+            
+            // Insentif kehadiran hanya diberikan jika HK memenuhi threshold (misal >= 20 hari)
+            $threshold_kehadiran = 20;
+            if ($hk < $threshold_kehadiran) {
+                $insentif_kehadiran = 0;
+            }
+            
+            // Total penerimaan berdasarkan HK
+            $total = $gaji_bulan + $insentif_jabatan + $insentif_kehadiran;
+            
+            $sheet->setCellValue('A' . $row, $no);
+            
+            // PERBAIKAN: Set nomor rekening sebagai string/text
+            $sheet->setCellValue('B' . $row, "'" . (string)$employee->no_rekening);
+            $sheet->getStyle('B' . $row)->getNumberFormat()->setFormatCode('@'); // Format text
+            
+            
+            // PERBAIKAN: Set NIK sebagai string/text
+            $sheet->setCellValue('C' . $row, "'" . (string)$employee->nik);
+            $sheet->getStyle('C' . $row)->getNumberFormat()->setFormatCode('@'); // Format text
+            
+            $sheet->setCellValue('D' . $row, strtoupper($employee->nama));
+            $sheet->setCellValue('E' . $row, strtoupper($area_name));
+            $sheet->setCellValue('F' . $row, $employee->join_date ? date('d F Y', strtotime($employee->join_date)) : date('d F Y', strtotime($start_date)));
+            $sheet->setCellValue('G' . $row, strtoupper($employee->jabatan ?? 'CSO'));
+            $sheet->setCellValue('H' . $row, $periode);
+            $sheet->setCellValue('I' . $row, $hk);
+            $sheet->setCellValue('J' . $row, $gaji_pokok);
+            $sheet->setCellValue('K' . $row, '');
+            $sheet->setCellValue('L' . $row, $insentif_jabatan > 0 ? $insentif_jabatan : '');
+            $sheet->setCellValue('M' . $row, $insentif_kehadiran > 0 ? $insentif_kehadiran : '');
+            $sheet->setCellValue('N' . $row, $total);
+            
+            // Format currency
+            $sheet->getStyle('J' . $row . ':J' . $row)->getNumberFormat()->setFormatCode('#,##0');
+            $sheet->getStyle('L' . $row . ':N' . $row)->getNumberFormat()->setFormatCode('#,##0');
+            
+            // Alignment
+            $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle('I' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle('J' . $row . ':N' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_RIGHT);
+            
+            // Borders
+            $sheet->getStyle('A' . $row . ':N' . $row)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            
+            $total_gaji_pokok += $gaji_pokok;
+            $total_insentif_jabatan += $insentif_jabatan;
+            $total_insentif_kehadiran += $insentif_kehadiran;
+            $total_penerimaan += $total;
+            
+            $row++;
+            $no++;
+        }
+        
+        // Total row
+        $sheet->setCellValue('A' . $row, 'TOTAL');
+        $sheet->mergeCells('A' . $row . ':I' . $row);
+        $sheet->setCellValue('J' . $row, $total_gaji_pokok);
+        $sheet->setCellValue('K' . $row, '-');
+        $sheet->setCellValue('L' . $row, $total_insentif_jabatan);
+        $sheet->setCellValue('M' . $row, $total_insentif_kehadiran);
+        $sheet->setCellValue('N' . $row, $total_penerimaan);
+        
+        $sheet->getStyle('A' . $row . ':N' . $row)->getFont()->setBold(true);
+        $sheet->getStyle('A' . $row . ':N' . $row)->getFill()
+            ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+            ->getStartColor()->setARGB('FFFFFF00');
+        $sheet->getStyle('J' . $row . ':N' . $row)->getNumberFormat()->setFormatCode('#,##0');
+        $sheet->getStyle('A' . $row . ':N' . $row)->getBorders()->getAllBorders()
+            ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_MEDIUM);
+        $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle('J' . $row . ':N' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_RIGHT);
+        
+        // Set column widths
+        $sheet->getColumnDimension('A')->setWidth(5);
+        $sheet->getColumnDimension('B')->setWidth(16);
+        $sheet->getColumnDimension('C')->setWidth(16);
+        $sheet->getColumnDimension('D')->setWidth(25);
+        $sheet->getColumnDimension('E')->setWidth(20);
+        $sheet->getColumnDimension('F')->setWidth(18);
+        $sheet->getColumnDimension('G')->setWidth(10);
+        $sheet->getColumnDimension('H')->setWidth(22);
+        $sheet->getColumnDimension('I')->setWidth(5);
+        $sheet->getColumnDimension('J')->setWidth(14);
+        $sheet->getColumnDimension('K')->setWidth(12);
+        $sheet->getColumnDimension('L')->setWidth(12);
+        $sheet->getColumnDimension('M')->setWidth(14);
+        $sheet->getColumnDimension('N')->setWidth(16);
+        
+        // PERBAIKAN: Set format text untuk kolom B dan D secara keseluruhan
+        $sheet->getStyle('B6:B' . ($row-1))->getNumberFormat()->setFormatCode('@');
+        $sheet->getStyle('C6:C' . ($row-1))->getNumberFormat()->setFormatCode('@');
+    }
+
+    private function createRekapitulasiSheet($spreadsheet, $employees_data, $start_date, $end_date, $area_name, $date_range_type)
+    {
+        $sheet = $spreadsheet->createSheet();
+        $sheet->setTitle('Rekapitulasi Absensi');
+        
+        // Logo/Header - Merge A1:B3
+        $sheet->setCellValue('A1', 'MDA');
+        $sheet->mergeCells('A1:B3');
+        $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(20)->getColor()->setARGB('FFFF0000');
+        $sheet->getStyle('A1')->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $sheet->getStyle('A1:B3')->getFill()
+            ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+            ->getStartColor()->setARGB('FFFFFFFF');
+        $sheet->getStyle('A1:B3')->getBorders()->getOutline()
+            ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_MEDIUM);
+        
+        $sheet->setCellValue('C1', 'MANDIRI DAYA ANDALAN');
+        $sheet->mergeCells('C1:C3');
+        $sheet->getStyle('C1')->getFont()->setBold(true)->setSize(10);
+        $sheet->getStyle('C1')->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT)
+            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        
+        // Title
+        $sheet->setCellValue('G1', 'REKAPITULASI ABSENSI');
+        $sheet->mergeCells('G1:AA1');
+        $sheet->getStyle('G1')->getFont()->setBold(true)->setSize(16);
+        $sheet->getStyle('G1')->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        
+        // Info box - Right side
+        $sheet->setCellValue('AK1', 'HALAMAN');
+        $sheet->mergeCells('AK1:AL1');
+        $sheet->mergeCells('AM1:AR1');
+        $sheet->setCellValue('AM1', '1');
+        $sheet->setCellValue('AK2', 'PERIODE');
+        $sheet->mergeCells('AK2:AL2');
+        $sheet->mergeCells('AM2:AR2');
+        $sheet->setCellValue('AM2', $this->formatPeriodForRekapitulasi($start_date, $end_date));
+        $sheet->setCellValue('AK3', 'PROJECT');
+        $sheet->mergeCells('AK3:AL3');
+        $sheet->mergeCells('AM3:AR3');
+        $sheet->setCellValue('AM3', strtoupper($area_name));
+        
+        $sheet->getStyle('AK1:AR3')->getBorders()->getAllBorders()
+            ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        $sheet->getStyle('AK1:AK3')->getFont()->setBold(true);
+        $sheet->getStyle('AM1:AN3')->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT);
+        
+        // Generate date columns
+        $dates = $this->generateDateRange($start_date, $end_date);
+        
+        // Headers Row 4
+        $row = 4;
+        $sheet->getRowDimension($row)->setRowHeight(20);
+        
+        $base_headers = [
+            'A' => 'No',
+            'B' => 'NIK', 
+            'C' => 'Nama Karyawan',
+            'D' => 'Jabatan',
+            'E' => 'AREA',
+            'F' => 'JOIN DATE'
+        ];
+        
+        // Merge No, NIK, Nama Karyawan, Jabatan, AREA row 4-6
+        foreach (['A', 'B', 'C', 'D', 'E'] as $col) {
+            $sheet->setCellValue($col . $row, $base_headers[$col]);
+            $sheet->mergeCells($col . '4:' . $col . '6');
+            $sheet->getStyle($col . '4:' . $col . '6')->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle($col . '4:' . $col . '6')->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            $sheet->getStyle($col . '4:' . $col . '6')->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+            $sheet->getStyle($col . '4:' . $col . '6')->getAlignment()->setWrapText(true);
+        }
+        // Join Date tetap tidak merge
+        $col = 'F';
+        $sheet->setCellValue($col . $row, $base_headers[$col]);
+        $sheet->getStyle($col . $row)->getFont()->setBold(true)->setSize(9);
+        $sheet->getStyle($col . $row)->getBorders()->getAllBorders()
+            ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        $sheet->getStyle($col . $row)->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+            ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        $sheet->getStyle($col . $row)->getAlignment()->setWrapText(true);
+        
+        // Periode Cut Off header
+        $start_col_idx = 6;
+        $end_col_idx = 6 + count($dates) - 1;
+        $sheet->setCellValue($this->getColumnLetter($start_col_idx) . $row, 'Periode Cut Off');
+        $sheet->mergeCells($this->getColumnLetter($start_col_idx) . $row . ':' . $this->getColumnLetter($end_col_idx) . $row);
+        $sheet->getStyle($this->getColumnLetter($start_col_idx) . $row)->getFont()->setBold(true)->setSize(9);
+        $sheet->getStyle($this->getColumnLetter($start_col_idx) . $row)->getAlignment()
+            ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle($this->getColumnLetter($start_col_idx) . $row . ':' . $this->getColumnLetter($end_col_idx) . $row)
+            ->getBorders()->getOutline()->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        
+        // Summary headers
+        $summary_start = $end_col_idx + 1;
+        $summary_headers = ['HK REAL', 'HK', 'OFF', 'SDS', 'STS', 'I', 'A', 'Keterangan'];
+        foreach ($summary_headers as $idx => $header) {
+            $col = $this->getColumnLetter($summary_start + $idx);
+            $sheet->setCellValue($col . $row, $header);
+            $sheet->mergeCells($col . '4:' . $col . '6');
+            $sheet->getStyle($col . '4:' . $col . '6')->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle($col . '4:' . $col . '6')->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            $sheet->getStyle($col . '4:' . $col . '6')->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+                ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+        }
+        
+        // Month headers - Row 5
+        $row = 5;
+        $sheet->getRowDimension($row)->setRowHeight(18);
+        $current_col_idx = 6;
+        $current_month = '';
+        $month_start = 6;
+        $month_names = [
+            1 => 'JANUARI', 2 => 'FEBRUARI', 3 => 'MARET', 4 => 'APRIL',
+            5 => 'MEI', 6 => 'JUNI', 7 => 'JULI', 8 => 'AGUSTUS',
+            9 => 'SEPTEMBER', 10 => 'OKTOBER', 11 => 'NOVEMBER', 12 => 'DESEMBER'
+        ];
+        foreach ($dates as $date) {
+            $month_num = intval(date('n', strtotime($date)));
+            $month_name = $month_names[$month_num];
+            if ($month_name != $current_month) {
+                if ($current_month != '') {
+                    $sheet->mergeCells($this->getColumnLetter($month_start) . $row . ':' . $this->getColumnLetter($current_col_idx - 1) . $row);
+                    $sheet->setCellValue($this->getColumnLetter($month_start) . $row, $current_month);
+                    $sheet->getStyle($this->getColumnLetter($month_start) . $row)->getFont()->setBold(true)->setSize(9);
+                    $sheet->getStyle($this->getColumnLetter($month_start) . $row)->getAlignment()
+                        ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+                    $sheet->getStyle($this->getColumnLetter($month_start) . $row . ':' . $this->getColumnLetter($current_col_idx - 1) . $row)
+                        ->getBorders()->getOutline()->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+                }
+                $current_month = $month_name;
+                $month_start = $current_col_idx;
+            }
+            $current_col_idx++;
+        }
+        // Last month
+        if ($current_month != '') {
+            $sheet->mergeCells($this->getColumnLetter($month_start) . $row . ':' . $this->getColumnLetter($current_col_idx - 1) . $row);
+            $sheet->setCellValue($this->getColumnLetter($month_start) . $row, $current_month);
+            $sheet->getStyle($this->getColumnLetter($month_start) . $row)->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle($this->getColumnLetter($month_start) . $row)->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle($this->getColumnLetter($month_start) . $row . ':' . $this->getColumnLetter($current_col_idx - 1) . $row)
+                ->getBorders()->getOutline()->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+        }
+        
+        // Date numbers - Row 6
+        $row = 6;
+        $sheet->getRowDimension($row)->setRowHeight(16);
+        $current_col_idx = 6;
+        foreach ($dates as $date) {
+            $day = date('j', strtotime($date));
+            $col = $this->getColumnLetter($current_col_idx);
+            $sheet->setCellValue($col . $row, $day);
+            $sheet->getStyle($col . $row)->getFont()->setSize(8);
+            $sheet->getStyle($col . $row)->getAlignment()
+                ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle($col . $row)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            // Color Sunday red
+            $day_of_week = date('N', strtotime($date));
+            if ($day_of_week == 7) {
+                $sheet->getStyle($col . $row)->getFill()
+                    ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                    ->getStartColor()->setARGB('FFFF0000');
+                $sheet->getStyle($col . $row)->getFont()->getColor()->setARGB('FFFFFFFF');
+            }
+            $current_col_idx++;
+        }
+        
+        // Data rows
+        $row = 7;
+        $no = 1;
+        foreach ($employees_data as $emp_data) {
+            $employee = $emp_data['employee'];
+            $attendance = $emp_data['attendance'];
+            $cuti = $emp_data['cuti'];
+            $izin = $emp_data['izin'];
+            $sheet->getRowDimension($row)->setRowHeight(20);
+            // Basic info
+            $sheet->setCellValue('A' . $row, $no);
+            // PERBAIKAN: Set NIK sebagai string/text
+            $sheet->setCellValue('B' . $row, "'" . ($employee->nik));
+            $sheet->getStyle('B' . $row)->getNumberFormat()->setFormatCode('@'); // Format text
+            $sheet->setCellValue('C' . $row, strtoupper($employee->nama));
+            $sheet->setCellValue('D' . $row, strtoupper($employee->jabatan));
+            $sheet->setCellValue('E' . $row, strtoupper($area_name));
+            $sheet->setCellValue('F' . $row, $employee->join_date ? date('d-M-y', strtotime($employee->join_date)) : '');
+            // Style basic columns
+            $sheet->getStyle('A' . $row . ':F' . $row)->getBorders()->getAllBorders()
+                ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            $sheet->getStyle('A' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle('B' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle('D' . $row)->getAlignment()->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle('C' . $row)->getFont()->setSize(9);
+            // Attendance marks
+            $current_col_idx = 6;
+            $hk_real = 0;
+            $hk = 0;
+            $off_days = 0;
+            $sds_days = 0;
+            $sts_days = 0;
+            $izin_days = 0;
+            $alpha_days = 0;
+            $attendance_map = array();
+            foreach ($attendance as $att) {
+                $attendance_map[$att->tanggal] = $att;
+            }
+            $cuti_dates = $this->getDateRangesFromRecords($cuti, 'awal_cuti', 'akhir_cuti');
+            $izin_dates = $this->getDateRangesFromRecords($izin, 'awal_izin', 'akhir_izin');
+            foreach ($dates as $date) {
+                $day_of_week = date('N', strtotime($date));
+                $col = $this->getColumnLetter($current_col_idx);
+                $mark = '';
+                $bg_color = '';
+                $font_color = 'FF000000';
+                if ($day_of_week == 7) {
+                    // Sunday
+                    $mark = 'H';
+                    $bg_color = 'FFFF0000';
+                    $font_color = 'FFFFFFFF';
+                    $off_days++;
+                } elseif (isset($attendance_map[$date])) {
+                    $att = $attendance_map[$date];
+                    if ($att->jam_masuk && $att->jam_pulang) {
+                        $mark = 'H';
+                        $hk++;
+                        $hk_real++;
+                    } elseif ($att->jam_masuk) {
+                        $mark = 'H';
+                        $hk_real++;
+                    }
+                } elseif (in_array($date, $cuti_dates)) {
+                    $mark = 'C';
+                    $bg_color = 'FF00FF00';
+                    $hk++;
+                } elseif (in_array($date, $izin_dates)) {
+                    $mark = 'I';
+                    $bg_color = 'FFFFFF00';
+                    $izin_days++;
+                } else {
+                    // Check if within employment period
+                    if (strtotime($date) >= strtotime($employee->join_date ?? $start_date)) {
+                        $mark = 'H';
+                        $bg_color = 'FFFF0000';
+                        $font_color = 'FFFFFFFF';
+                        $alpha_days++;
+                    }
+                }
+                $sheet->setCellValue($col . $row, $mark);
+                $sheet->getStyle($col . $row)->getFont()->setSize(8);
+                $sheet->getStyle($col . $row)->getAlignment()
+                    ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER)
+                    ->setVertical(\PhpOffice\PhpSpreadsheet\Style\Alignment::VERTICAL_CENTER);
+                if ($bg_color) {
+                    $sheet->getStyle($col . $row)->getFill()
+                        ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                        ->getStartColor()->setARGB($bg_color);
+                    $sheet->getStyle($col . $row)->getFont()->getColor()->setARGB($font_color);
+                }
+                $sheet->getStyle($col . $row)->getBorders()->getAllBorders()
+                    ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+                $current_col_idx++;
+            }
+            // Summary columns
+            $summary_start = 6 + count($dates);
+            $summary_values = [$hk_real, $hk, $off_days, $sds_days, $sts_days, $izin_days, $alpha_days];
+            foreach ($summary_values as $idx => $value) {
+                $col = $this->getColumnLetter($summary_start + $idx);
+                $sheet->setCellValue($col . $row, $value);
+                $sheet->getStyle($col . $row)->getFont()->setSize(9);
+                $sheet->getStyle($col . $row)->getAlignment()
+                    ->setHorizontal(\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER);
+                $sheet->getStyle($col . $row)->getBorders()->getAllBorders()
+                    ->setBorderStyle(\PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN);
+            }
+            $row++;
+            $no++;
+        }
+        
+        // Set column widths
+        $sheet->getColumnDimension('A')->setWidth(4);
+        $sheet->getColumnDimension('B')->setWidth(16);
+        $sheet->getColumnDimension('C')->setWidth(22);
+        $sheet->getColumnDimension('D')->setWidth(10);
+        $sheet->getColumnDimension('E')->setWidth(20);
+        $sheet->getColumnDimension('F')->setWidth(12);
+        // Date columns
+        for ($i = 6; $i < 6 + count($dates); $i++) {
+            $sheet->getColumnDimension($this->getColumnLetter($i))->setWidth(3);
+        }
+        // Summary columns
+        $summary_start = 7 + count($dates);
+        for ($i = 0; $i < 8; $i++) {
+            $sheet->getColumnDimension($this->getColumnLetter($summary_start + $i))->setWidth(6);
+        }
+        // Wider keterangan column
+        $sheet->getColumnDimension($this->getColumnLetter($summary_start + 7))->setWidth(15);
+
+        $last_row = 6 + count($employees_data);
+        $sheet->getStyle('B7:B' . $last_row)->getNumberFormat()->setFormatCode('@');
+    }
+
+    private function getEmployeesByArea($area_id, $start_date, $end_date)
+    {
+        // Get all employees in the area with incentive columns
+        $this->db->select('user.*, lokasi.nama_lokasi as area_name');
+        $this->db->from('user');
+        $this->db->join('lokasi', 'lokasi.id = user.lokasi_id', 'left');
+        $this->db->where('user.lokasi_id', $area_id);
+        $this->db->where('user.role', 'user');
+        $this->db->order_by('user.nama', 'ASC');
+        
+        $employees = $this->db->get()->result();
+        
+        $employees_data = array();
+        
+        foreach ($employees as $employee) {
+            // Get attendance data
+            $attendance_data = $this->getEmployeeAttendanceForPayroll($employee->id, $start_date, $end_date);
+            
+            // Get cuti data
+            $cuti_data = $this->getEmployeeCutiForPayroll($employee->id, $start_date, $end_date);
+            
+            // Get izin data
+            $izin_data = $this->getEmployeeIzinForPayroll($employee->id, $start_date, $end_date);
+            
+            $employees_data[] = array(
+                'employee' => $employee,
+                'attendance' => $attendance_data,
+                'cuti' => $cuti_data,
+                'izin' => $izin_data
+            );
+        }
+        
+        return $employees_data;
+    }
+
+    // Update function calculateWorkingDays untuk menghitung HK dengan lebih akurat
+    private function calculateWorkingDays($attendance, $start_date, $end_date)
+    {
+        $working_days = 0;
+        
+        foreach ($attendance as $att) {
+            // Count if both check-in and check-out exist
+            if ($att->jam_masuk && $att->jam_pulang) {
+                $working_days++;
+            }
+        }
+        
+        return $working_days;
     }
 }

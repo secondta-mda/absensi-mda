@@ -294,6 +294,7 @@
                         </div>
                     </div>
 
+                    <!-- Update bagian button form -->
                     <div class="flex flex-col sm:flex-row justify-end gap-3">
                         <button type="submit" id="submitBtn"
                             class="hidden bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200 shadow-md">
@@ -302,6 +303,10 @@
                         <button type="button" id="exportBtn"
                             class="hidden bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200 shadow-md">
                             <i class="fas fa-file-excel mr-2"></i>Export Excel
+                        </button>
+                        <button type="button" id="exportPayrollBtn"
+                            class="hidden bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-8 rounded-lg transition-colors duration-200 shadow-md">
+                            <i class="fas fa-file-invoice-dollar mr-2"></i>Export Payroll
                         </button>
                     </div>
                 </form>
@@ -511,13 +516,12 @@
         });
 
         // Function to check if both selections are made
+        // Update function checkSelections() untuk menampilkan button payroll
         function checkSelections() {
             const dataType = $('#dataType').val();
             const dateRangeType = $('#dateRangeType').val();
 
-            // Only proceed if both selections are made
             if (dataType && dateRangeType) {
-                // Show appropriate selection div based on data type
                 if (dataType === 'per_orang') {
                     $('#employeeSelectDiv').removeClass('hidden');
                     initializeEmployeeSelect();
@@ -526,7 +530,6 @@
                     loadAreaOptions();
                 }
 
-                // Show appropriate date inputs based on date range type
                 $('#dateInputs').removeClass('hidden');
                 if (dateRangeType === 'daily') {
                     $('#dailyInputs').removeClass('hidden');
@@ -534,8 +537,15 @@
                     $('#monthlyInputs').removeClass('hidden');
                 }
 
-                // Show submit button and export button
+                // Show submit and export buttons
                 $('#submitBtn, #exportBtn').removeClass('hidden');
+
+                // Show payroll button only for per_area
+                if (dataType === 'per_area') {
+                    $('#exportPayrollBtn').removeClass('hidden');
+                } else {
+                    $('#exportPayrollBtn').addClass('hidden');
+                }
             }
         }
 
@@ -657,6 +667,134 @@
                     })
                     .catch(error => {
                         console.error('Error exporting to Excel:', error);
+                        Swal.fire({
+                            title: 'Export Gagal',
+                            text: 'Terjadi kesalahan saat mengekspor data: ' + error
+                                .message,
+                            icon: 'error',
+                            confirmButtonColor: '#dc2626'
+                        });
+                    });
+            });
+        }
+
+        // Tambahkan di bagian JavaScript, setelah function exportToExcel()
+
+        $('#exportPayrollBtn').on('click', function(e) {
+            e.preventDefault();
+
+            // Validasi bahwa ini adalah data per area
+            const dataType = $('#dataType').val();
+
+            if (dataType !== 'per_area') {
+                Swal.fire({
+                    title: 'Peringatan',
+                    text: 'Export Payroll hanya tersedia untuk data per area',
+                    icon: 'warning',
+                    confirmButtonColor: '#3b82f6'
+                });
+                return;
+            }
+
+            if (validateForm()) {
+                exportPayroll();
+            }
+        });
+
+        function exportPayroll() {
+            const exportPromise = new Promise((resolve, reject) => {
+                Swal.fire({
+                    title: 'Mempersiapkan Laporan Payroll',
+                    html: `
+                <div class="export-progress">
+                    <div class="progress-bar">
+                        <div class="progress"></div>
+                    </div>
+                    <div class="progress-text">Mengumpulkan data... 0%</div>
+                    <div class="time-remaining">Estimasi waktu: <span class="time">5</span> detik</div>
+                </div>
+            `,
+                    showConfirmButton: false,
+                    allowOutsideClick: false,
+                    didOpen: () => {
+                        const progressBar = Swal.getHtmlContainer().querySelector(
+                            '.progress');
+                        const progressText = Swal.getHtmlContainer().querySelector(
+                            '.progress-text');
+                        const timeRemaining = Swal.getHtmlContainer().querySelector(
+                            '.time');
+
+                        let progress = 0;
+                        let timeEstimate = 5;
+
+                        const interval = setInterval(() => {
+                            progress += 20;
+                            if (progress >= 100) {
+                                progress = 100;
+                                clearInterval(interval);
+                                resolve();
+                            }
+
+                            progressBar.style.width = `${progress}%`;
+                            progressText.textContent =
+                                `Mempersiapkan file... ${Math.round(progress)}%`;
+                            timeEstimate = Math.max(1, Math.round((100 - progress) /
+                                20 * 0.5));
+                            timeRemaining.textContent = timeEstimate;
+                        }, 500);
+                    }
+                });
+            });
+
+            exportPromise.then(() => {
+                Swal.close();
+
+                Swal.fire({
+                    title: 'File Siap!',
+                    text: 'Download akan segera dimulai...',
+                    icon: 'success',
+                    timer: 2000,
+                    showConfirmButton: false
+                });
+
+                const formData = getFormData();
+                const form = new FormData();
+
+                for (const [key, value] of Object.entries(formData)) {
+                    form.append(key, value);
+                }
+
+                fetch('<?php echo base_url('user/export_excel_payroll'); ?>', {
+                        method: 'POST',
+                        body: form
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('Network response was not ok');
+                        }
+                        return response.blob();
+                    })
+                    .then(blob => {
+                        const url = window.URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.style.display = 'none';
+                        a.href = url;
+                        a.download = `Payroll_${new Date().toISOString().split('T')[0]}.xlsx`;
+                        document.body.appendChild(a);
+                        a.click();
+                        window.URL.revokeObjectURL(url);
+                        document.body.removeChild(a);
+
+                        Swal.fire({
+                            title: 'Download Berhasil!',
+                            text: 'File Payroll telah berhasil diunduh',
+                            icon: 'success',
+                            timer: 3000,
+                            showConfirmButton: false
+                        });
+                    })
+                    .catch(error => {
+                        console.error('Error exporting payroll:', error);
                         Swal.fire({
                             title: 'Export Gagal',
                             text: 'Terjadi kesalahan saat mengekspor data: ' + error
